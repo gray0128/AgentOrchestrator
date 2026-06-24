@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-orchestrator.merge-decision.v1",
+  "title": "MergeDecision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "role", "run_id", "issue", "pr", "head_sha", "decision", "reasons", "checks", "created_at"],
+  "properties": {
+    "schema": { "const": "agent-orchestrator.merge-decision.v1" },
+    "role": { "const": "merge_agent" },
+    "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]+$" },
+    "issue": { "type": "integer", "minimum": 1 },
+    "pr": { "type": "integer", "minimum": 1 },
+    "head_sha": { "type": "string", "minLength": 7 },
+    "decision": { "enum": ["MERGE_ALLOWED", "WAIT", "BLOCKED"] },
+    "merge_method": { "enum": ["squash", "merge", "rebase"] },
+    "reasons": { "type": "array", "items": { "type": "string" } },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["labels_allowed", "risk_allowed", "plan_review_current", "pr_review_current", "checks_succeeded", "github_mergeable"],
+      "properties": {
+        "labels_allowed": { "type": "boolean" },
+        "risk_allowed": { "type": "boolean" },
+        "plan_review_current": { "type": "boolean" },
+        "pr_review_current": { "type": "boolean" },
+        "checks_succeeded": { "type": "boolean" },
+        "github_mergeable": { "type": "boolean" }
+      }
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

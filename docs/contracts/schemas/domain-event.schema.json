@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-orchestrator.domain-event.v1",
+  "title": "DomainEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "event_type", "delivery_id", "repo", "created_at"],
+  "properties": {
+    "schema": { "const": "agent-orchestrator.domain-event.v1" },
+    "event_type": {
+      "enum": [
+        "issue.autopilot_requested",
+        "control.pause",
+        "control.resume",
+        "control.retry",
+        "control.no_merge",
+        "agent.plan_submitted",
+        "agent.plan_review_approved",
+        "agent.plan_review_changes_requested",
+        "agent.plan_review_blocked",
+        "agent.implementation_ready",
+        "pull_request.bound",
+        "pull_request.synchronized",
+        "agent.pr_review_approved",
+        "agent.pr_review_changes_requested",
+        "agent.pr_review_blocked",
+        "checks.succeeded",
+        "checks.failed",
+        "checks.pending",
+        "agent.fix_ready",
+        "merge.completed",
+        "issue.closeout_completed",
+        "policy.block",
+        "retry.exhausted"
+      ]
+    },
+    "delivery_id": { "type": "string", "minLength": 1 },
+    "repo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "name"],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "issue": { "type": "integer", "minimum": 1 },
+    "pr": { "type": "integer", "minimum": 1 },
+    "head_sha": { "type": "string" },
+    "actor": { "type": "string" },
+    "source": { "enum": ["webhook", "reconciliation", "manual"] },
+    "payload_ref": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

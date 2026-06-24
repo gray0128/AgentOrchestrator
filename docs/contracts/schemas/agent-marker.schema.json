@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-orchestrator.agent-marker.v1",
+  "title": "AgentMarker",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "role", "issue", "run_id"],
+  "properties": {
+    "schema": { "const": "agent-orchestrator:v1" },
+    "role": {
+      "enum": [
+        "orchestrator",
+        "planner",
+        "plan_reviewer",
+        "implementer",
+        "pr_reviewer",
+        "merge_agent"
+      ]
+    },
+    "issue": { "type": "integer", "minimum": 1 },
+    "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]+$" },
+    "verdict": {
+      "enum": [
+        "ACCEPTED",
+        "READY_FOR_REVIEW",
+        "APPROVED",
+        "REQUEST_CHANGES",
+        "BLOCKED",
+        "CHECKS_FAILED",
+        "MERGED"
+      ]
+    },
+    "pr": { "type": "integer", "minimum": 1 },
+    "head_sha": { "type": "string" }
+  }
+}

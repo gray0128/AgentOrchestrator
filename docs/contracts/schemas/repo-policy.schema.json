@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-orchestrator.repo-policy.v1",
+  "title": "RepoPolicy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "autopilot", "merge", "paths", "checks", "review"],
+  "properties": {
+    "version": { "const": 1 },
+    "autopilot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "trigger_labels"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "trigger_labels": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "allowed_actors": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "merge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default_method", "auto_merge"],
+      "properties": {
+        "default_method": { "enum": ["squash", "merge", "rebase"] },
+        "auto_merge": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "allowed_risks", "blocked_labels"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "allowed_risks": { "type": "array", "items": { "enum": ["low", "medium", "high"] } },
+            "blocked_labels": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allow", "deny", "high_risk"],
+      "properties": {
+        "allow": { "type": "array", "items": { "type": "string" } },
+        "deny": { "type": "array", "items": { "type": "string" } },
+        "high_risk": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "source"],
+      "properties": {
+        "required": { "type": "array", "items": { "type": "string" } },
+        "source": { "enum": ["github_merge_gate", "policy_required_names", "branch_protection_read"] },
+        "skipped_counts_as_success": { "type": "boolean", "default": false },
+        "neutral_counts_as_success": { "type": "boolean", "default": false }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_fix_rounds", "require_plan_review", "require_pr_review", "agent_review_counts_as_human_review"],
+      "properties": {
+        "max_fix_rounds": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "require_plan_review": { "type": "boolean" },
+        "require_pr_review": { "type": "boolean" },
+        "agent_review_counts_as_human_review": { "const": false }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["when", "use"],
+            "properties": {
+              "when": { "type": "object" },
+              "use": { "type": "object" },
+              "controls": { "type": "object" },
+              "requirements": { "type": "object" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

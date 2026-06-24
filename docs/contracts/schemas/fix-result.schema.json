@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-orchestrator.fix-result.v1",
+  "title": "FixResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "role", "run_id", "issue", "pr", "fix_round", "branch", "changed_files", "summary", "test_summary", "risk", "created_at"],
+  "properties": {
+    "schema": { "const": "agent-orchestrator.fix-result.v1" },
+    "role": { "const": "implementer" },
+    "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]+$" },
+    "issue": { "type": "integer", "minimum": 1 },
+    "pr": { "type": "integer", "minimum": 1 },
+    "fix_round": { "type": "integer", "minimum": 1, "maximum": 10 },
+    "branch": { "type": "string", "pattern": "^agent/issue-[0-9]+-[a-z0-9][a-z0-9-]*$" },
+    "base_head_sha": { "type": "string" },
+    "new_head_sha": { "type": "string" },
+    "changed_files": { "type": "array", "items": { "type": "string" } },
+    "summary": { "type": "string", "minLength": 1 },
+    "test_summary": { "type": "array", "items": { "type": "string" } },
+    "risk": { "enum": ["low", "medium", "high"] },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

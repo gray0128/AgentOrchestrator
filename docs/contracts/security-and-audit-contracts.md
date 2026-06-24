@@ -1,0 +1,76 @@
+# Security And Audit Contracts
+
+## Trust Boundaries
+
+- GitHub webhook payloads are authenticated by signature, but issue bodies, PR bodies, comments, labels, and file contents remain untrusted user-controlled input.
+- Agent outputs are untrusted proposals until schema validation, policy validation, and actual repository state validation succeed.
+- GitHub installation tokens are only available inside the GitHub API Adapter and controlled Git transport code.
+- Agent prompts must not include installation tokens, private keys, webhook secrets, or local config secrets.
+
+## GitHub App Permissions
+
+MVP required permissions:
+
+| Permission | Level | Purpose |
+| --- | --- | --- |
+| Metadata | read | Repository identity and baseline metadata. |
+| Issues | write | Issue labels, comments, closeout. |
+| Pull requests | write | Create PRs, read diffs, submit reviews, merge. |
+| Contents | write | Branch and commit writes through controlled adapter. |
+| Checks | read | Check run aggregation. |
+| Actions | read | Workflow run context and logs links. |
+| Commit statuses | read | Legacy status aggregation. |
+
+Optional:
+
+| Permission | Level | Purpose |
+| --- | --- | --- |
+| Administration | read | Direct branch protection config reads when explicitly enabled. |
+
+## Prompt Injection Rules
+
+Untrusted content must not:
+
+- Override local policy, repo policy, or state transition guards.
+- Request token disclosure or local secret reads.
+- Request bypassing plan review, PR review, CI, rulesets, or merge API checks.
+- Expand allowed write paths.
+- Change agent identity, execution mode, or network policy beyond configured limits.
+- Mark high-risk work as low risk.
+
+Violations enter `blocked` with `PROMPT_INJECTION_POLICY_VIOLATION` when they affect execution.
+
+## Policy Blocks
+
+The following always block automatic merge:
+
+- Paths denied by policy.
+- High-risk paths unless explicitly cleared by a human-controlled policy flow.
+- `agent:pause`, `agent:no-merge`, `needs-human`, or `risk:high`.
+- Stale head sha for review, check, or merge decisions.
+- Requested changes not superseded by a current-head approved review.
+- Branch protection or ruleset rejection.
+- Merge API rejection for the current head sha.
+
+## Audit Events
+
+Every material action must leave a GitHub-visible or local append-only audit event.
+
+| Event | Required Location |
+| --- | --- |
+| Planning started | Issue comment or state label plus transition record. |
+| Plan submitted | Issue comment with marker. |
+| Plan review submitted | Issue comment with marker. |
+| Implementation started | Issue comment or state label plus transition record. |
+| PR created | PR body with marker and `Closes #<issue>`. |
+| PR review submitted | Pull request review with marker. |
+| CI failure summarized | PR or issue comment. |
+| Fix round started/completed | Transition record and PR update. |
+| Merge gate evaluated | Transition record and final summary. |
+| Blocked | Issue or PR comment plus `needs-human` and `agent:blocked`. |
+| Merge completed | Transition record. |
+| Issue closeout | Final issue comment and closed issue. |
+
+## Error Codes
+
+The initial registry is maintained in `docs/api-design/06-error-codes-and-permission-actions.md`. New code must use registered error codes or update that registry first.

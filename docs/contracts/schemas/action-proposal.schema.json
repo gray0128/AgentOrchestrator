@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-orchestrator.action-proposal.v1",
+  "title": "ActionProposal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "role", "run_id", "repo", "issue", "actions", "verdict", "risk", "created_at"],
+  "properties": {
+    "schema": { "const": "agent-orchestrator.action-proposal.v1" },
+    "role": { "enum": ["planner", "plan_reviewer", "implementer", "pr_reviewer"] },
+    "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]+$" },
+    "repo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "name"],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "issue": { "type": "integer", "minimum": 1 },
+    "pr": { "type": "integer", "minimum": 1 },
+    "base_sha": { "type": "string" },
+    "head_sha": { "type": "string" },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "summary"],
+        "properties": {
+          "type": {
+            "enum": [
+              "propose_plan",
+              "propose_plan_review",
+              "propose_commit",
+              "propose_pr_body",
+              "propose_pr_review",
+              "propose_fix",
+              "report_blocked"
+            ]
+          },
+          "summary": { "type": "string", "minLength": 1 },
+          "changed_files": { "type": "array", "items": { "type": "string" } },
+          "test_summary": { "type": "array", "items": { "type": "string" } },
+          "blocking_findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["severity", "message"],
+              "properties": {
+                "severity": { "enum": ["low", "medium", "high"] },
+                "file": { "type": "string" },
+                "line": { "type": "integer", "minimum": 1 },
+                "message": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "body": { "type": "string" }
+        }
+      }
+    },
+    "verdict": {
+      "enum": [
+        "READY_FOR_REVIEW",
+        "APPROVED",
+        "REQUEST_CHANGES",
+        "BLOCKED",
+        "FAILED"
+      ]
+    },
+    "risk": { "enum": ["low", "medium", "high"] },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-orchestrator.reviewer-verdict.v1",
+  "title": "ReviewerVerdict",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "role", "run_id", "issue", "verdict", "risk", "summary", "blocking_findings", "required_tests", "created_at"],
+  "properties": {
+    "schema": { "const": "agent-orchestrator.reviewer-verdict.v1" },
+    "role": { "enum": ["plan_reviewer", "pr_reviewer"] },
+    "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]+$" },
+    "issue": { "type": "integer", "minimum": 1 },
+    "pr": { "type": "integer", "minimum": 1 },
+    "head_sha": { "type": "string" },
+    "verdict": { "enum": ["APPROVED", "REQUEST_CHANGES", "BLOCKED"] },
+    "risk": { "enum": ["low", "medium", "high"] },
+    "summary": { "type": "string", "minLength": 1 },
+    "blocking_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "message"],
+        "properties": {
+          "severity": { "enum": ["low", "medium", "high"] },
+          "file": { "type": "string" },
+          "line": { "type": "integer", "minimum": 1 },
+          "message": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "required_tests": { "type": "array", "items": { "type": "string" } },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

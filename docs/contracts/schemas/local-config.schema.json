@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-orchestrator.local-config.v1",
+  "title": "LocalConfig",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "database", "workspaces", "repositories", "agents"],
+  "properties": {
+    "version": { "const": 1 },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 }
+      }
+    },
+    "workspaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root"],
+      "properties": {
+        "root": { "type": "string", "minLength": 1 },
+        "cleanup_after_days": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "repositories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["owner", "name", "local_path", "default_branch", "policy_file"],
+        "properties": {
+          "owner": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "local_path": { "type": "string", "minLength": 1 },
+          "default_branch": { "type": "string", "minLength": 1 },
+          "policy_file": { "type": "string", "minLength": 1 },
+          "agents": { "type": "object" }
+        }
+      }
+    },
+    "agents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planner", "plan_reviewer", "implementer", "pr_reviewer", "merge_agent"],
+      "properties": {
+        "planner": { "$ref": "#/$defs/agent" },
+        "plan_reviewer": { "$ref": "#/$defs/agent" },
+        "implementer": { "$ref": "#/$defs/agent" },
+        "pr_reviewer": { "$ref": "#/$defs/agent" },
+        "merge_agent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["adapter", "mode"],
+          "properties": {
+            "adapter": { "const": "builtin" },
+            "mode": { "const": "deterministic" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adapter", "command", "args", "mode"],
+      "properties": {
+        "adapter": { "enum": ["codex", "claude", "custom"] },
+        "command": { "type": "string", "minLength": 1 },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "mode": { "enum": ["read_only", "write_worktree"] },
+        "network": { "enum": ["deny", "allow", "restricted"] }
+      }
+    }
+  }
+}

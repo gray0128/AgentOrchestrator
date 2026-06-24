@@ -1,0 +1,86 @@
+# Task And State Contracts
+
+## State Vocabulary
+
+| State | Meaning | Terminal |
+| --- | --- | --- |
+| `new` | Issue discovered but no work started. | No |
+| `planning` | Planner agent is producing a plan. | No |
+| `plan_reviewing` | Plan reviewer is validating the plan. | No |
+| `implementing` | Implementer is creating code changes. | No |
+| `pr_opened` | PR exists and is bound to the run. | No |
+| `pr_reviewing` | PR reviewer is validating current PR head. | No |
+| `ci_waiting` | Required checks/statuses are pending or being evaluated. | No |
+| `fixing` | Implementer is repairing review or CI failures. | No |
+| `merge_ready` | Local gates passed for the current head. | No |
+| `merged` | GitHub merge API succeeded. | No |
+| `issue_closed` | Issue closeout comment written and issue closed. | Yes |
+| `paused` | User or policy paused automation. | No |
+| `blocked` | Policy, permission, high risk, or unrecoverable conflict requires human action. | No |
+| `failed` | Retry budget exhausted and no automatic path remains. | Yes |
+
+## Allowed Transitions
+
+| From | Event | To | Required Guard |
+| --- | --- | --- | --- |
+| `new` | `issue.autopilot_requested` | `planning` | Issue has `agent:autopilot`, no pause/human labels, repo allowed. |
+| `planning` | `agent.plan_submitted` | `plan_reviewing` | Plan marker schema valid. |
+| `plan_reviewing` | `agent.plan_review_approved` | `implementing` | Reviewer verdict `APPROVED`. |
+| `plan_reviewing` | `agent.plan_review_changes_requested` | `planning` | Retry budget available. |
+| `plan_reviewing` | `agent.plan_review_blocked` | `blocked` | Reviewer verdict `BLOCKED`. |
+| `implementing` | `agent.implementation_ready` | `pr_opened` | Diff allowed, PR created or rebound. |
+| `pr_opened` | `pull_request.bound` | `pr_reviewing` | PR head sha recorded. |
+| `pr_reviewing` | `agent.pr_review_approved` | `ci_waiting` | Review bound to current head sha. |
+| `pr_reviewing` | `agent.pr_review_changes_requested` | `fixing` | Fix rounds below policy max. |
+| `pr_reviewing` | `agent.pr_review_blocked` | `blocked` | Blocking findings or high risk. |
+| `ci_waiting` | `checks.succeeded` | `merge_ready` | Required checks and statuses succeeded for current head. |
+| `ci_waiting` | `checks.failed` | `fixing` | Fix rounds below policy max. |
+| `fixing` | `agent.fix_ready` | `pr_reviewing` | New commit pushed; old review and CI conclusions invalidated. |
+| `merge_ready` | `merge.completed` | `merged` | GitHub merge API accepted current head sha. |
+| `merged` | `issue.closeout_completed` | `issue_closed` | Final comment written and Issue closed. |
+| Any nonterminal | `control.pause` | `paused` | `agent:pause` appears or `/agent pause`. |
+| `paused` | `control.resume` | Previous recoverable state | Policy recomputed and labels allow work. |
+| Any nonterminal | `policy.block` | `blocked` | Deny path, high risk, permission failure, stale unrecoverable state. |
+| `blocked` | `control.resume` | Reconciled state | Human removed blocker and policy recomputed cleanly. |
+| Any nonterminal | `retry.exhausted` | `failed` | Retry budget exhausted and no policy block explains it. |
+
+## Head SHA Invalidation
+
+- `pull_request.synchronize` must re-read the PR and compare payload sha with current PR `head_sha`.
+- If the PR head changed, all PR review, CI, and merge-ready conclusions for the old sha are invalid.
+- After a fix push, the next state is `pr_reviewing`; the system must not jump directly to `merge_ready`.
+- Check/status events only apply when their sha equals the current PR head sha.
+
+## Label Contract
+
+- Entry label: `agent:autopilot`.
+- State labels are mutually exclusive: `agent:planning`, `agent:plan-review`, `agent:implementing`, `agent:pr-review`, `agent:fixing`, `agent:merge-ready`, `agent:done`, `agent:blocked`.
+- Control labels: `agent:pause`, `agent:no-merge`, `needs-human`.
+- Risk labels: `risk:low`, `risk:medium`, `risk:high`.
+- Type labels: `type:bug`, `type:feature`, `type:docs`, `type:refactor`.
+
+Labels are a user interface and recovery signal. SQLite CAS and idempotency records are still required for execution safety.
+
+## Retry Contract
+
+| Failure | Automatic Handling |
+| --- | --- |
+| Agent process exits nonzero | Retry at most 2 times, then `failed`. |
+| Agent output schema invalid | Retry at most 1 time, then `blocked` with schema error. |
+| Plan review requests changes | Return to `planning` while retry budget remains. |
+| PR review requests changes | Enter `fixing` while fix rounds remain. |
+| CI/check failure | Enter `fixing` while fix rounds remain. |
+| GitHub API 403, 405, 409, 422 | Re-read state once; if still blocked, enter `blocked`. |
+| Duplicate webhook delivery | Mark ignored, do not advance state. |
+| Lost webhook | Reconciliation may advance after re-reading GitHub. |
+
+## Reconciliation Contract
+
+Reconciliation scans:
+
+- Issues with `agent:autopilot` and no terminal label.
+- Open PRs with branches matching `agent/issue-*`.
+- Runs with expired leases.
+- PRs or issues marked `agent:merge-ready` but not merged or closed.
+
+Reconciliation may bind existing markers, branches, PRs, reviews, and checks. It must not bypass pause/no-merge/needs-human labels.

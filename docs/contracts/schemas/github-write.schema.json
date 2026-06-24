@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-orchestrator.github-write.v1",
+  "title": "GitHubWriteAction",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "run_id", "idempotency_key", "action_type", "target", "request_hash", "created_at"],
+  "properties": {
+    "schema": { "const": "agent-orchestrator.github-write.v1" },
+    "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]+$" },
+    "idempotency_key": { "type": "string", "minLength": 1 },
+    "action_type": {
+      "enum": [
+        "create_issue_comment",
+        "update_issue_comment",
+        "set_labels",
+        "create_branch",
+        "commit_changes",
+        "create_pull_request",
+        "submit_pull_request_review",
+        "merge_pull_request",
+        "delete_branch",
+        "close_issue"
+      ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["issue", "pull_request", "branch", "review", "commit", "local_worktree"] },
+        "id": { "type": "string" },
+        "issue": { "type": "integer", "minimum": 1 },
+        "pr": { "type": "integer", "minimum": 1 },
+        "head_sha": { "type": "string" }
+      }
+    },
+    "request_hash": { "type": "string", "minLength": 1 },
+    "response_ref": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

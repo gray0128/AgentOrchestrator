@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-orchestrator.task-envelope.v1",
+  "title": "TaskEnvelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "role", "run_id", "repo", "issue", "workspace", "policy", "expected_outputs", "created_at"],
+  "properties": {
+    "schema": { "const": "agent-orchestrator.task-envelope.v1" },
+    "role": { "enum": ["planner", "plan_reviewer", "implementer", "pr_reviewer"] },
+    "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]+$" },
+    "repo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "name", "default_branch"],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "default_branch": { "type": "string", "minLength": 1 }
+      }
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "title", "body", "author", "labels"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "author": { "type": "string" },
+        "labels": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "pr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "title", "body", "head_sha", "base_branch", "head_branch"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "head_sha": { "type": "string", "minLength": 7 },
+        "base_branch": { "type": "string" },
+        "head_branch": { "type": "string" }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["comment_url", "summary", "verdict"],
+      "properties": {
+        "comment_url": { "type": "string", "format": "uri" },
+        "summary": { "type": "string" },
+        "verdict": { "enum": ["APPROVED", "REQUEST_CHANGES", "BLOCKED"] }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "branch"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "branch": { "type": "string", "pattern": "^agent/issue-[0-9]+-[a-z0-9][a-z0-9-]*$" },
+        "base_sha": { "type": "string" },
+        "head_sha": { "type": "string" }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allow_write", "deny_write", "high_risk", "required_tests", "network", "max_fix_rounds"],
+      "properties": {
+        "allow_write": { "type": "array", "items": { "type": "string" } },
+        "deny_write": { "type": "array", "items": { "type": "string" } },
+        "high_risk": { "type": "array", "items": { "type": "string" } },
+        "required_tests": { "type": "array", "items": { "type": "string" } },
+        "network": { "enum": ["deny", "allow", "restricted"] },
+        "max_fix_rounds": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "allow_secrets": { "type": "boolean", "default": false }
+      }
+    },
+    "expected_outputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "plan": { "type": "boolean" },
+        "review": { "type": "boolean" },
+        "commit": { "type": "boolean" },
+        "pr_body": { "type": "boolean" },
+        "test_summary": { "type": "boolean" },
+        "changed_files": { "type": "boolean" }
+      }
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

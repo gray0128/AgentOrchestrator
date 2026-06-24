@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-orchestrator.implementation-result.v1",
+  "title": "ImplementationResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "role", "run_id", "issue", "branch", "changed_files", "summary", "test_summary", "risk", "pr_body_fields", "created_at"],
+  "properties": {
+    "schema": { "const": "agent-orchestrator.implementation-result.v1" },
+    "role": { "const": "implementer" },
+    "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]+$" },
+    "issue": { "type": "integer", "minimum": 1 },
+    "branch": { "type": "string", "pattern": "^agent/issue-[0-9]+-[a-z0-9][a-z0-9-]*$" },
+    "base_sha": { "type": "string" },
+    "head_sha": { "type": "string" },
+    "changed_files": { "type": "array", "items": { "type": "string" } },
+    "summary": { "type": "string", "minLength": 1 },
+    "test_summary": { "type": "array", "items": { "type": "string" } },
+    "risk": { "enum": ["low", "medium", "high"] },
+    "pr_body_fields": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "tests", "risk"],
+      "properties": {
+        "summary": { "type": "string" },
+        "tests": { "type": "array", "items": { "type": "string" } },
+        "risk": { "type": "string" }
+      }
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}
