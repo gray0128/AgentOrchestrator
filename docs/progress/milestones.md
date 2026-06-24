@@ -5,10 +5,10 @@ Updated: 2026-06-24
 | Milestone | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
 | Contract setup | Done | Contract docs, API design docs, schemas, development plan, progress trackers, and `AGENTS.md` added; all schema JSON files parse successfully. | None. |
-| M0 - Webhook foundation | Not started | No source code yet. | Complete T-M0-001 through T-M0-005. |
-| M0.5 - State store | Not started | No source code yet. | Complete T-M05-001 through T-M05-005. |
-| M1 - State machine and labels | Not started | No source code yet. | Complete T-M1-001 through T-M1-005. |
-| M2 - Planner and plan reviewer | Not started | No source code yet. | Complete T-M2-001 through T-M2-005. |
-| M3 - Implementer creates PR | Not started | No source code yet. | Complete T-M3-001 through T-M3-005. |
-| M4 - PR review and CI gate | Not started | No source code yet. | Complete T-M4-001 through T-M4-004. |
-| M5 - Merge and closeout | Not started | No source code yet. | Complete T-M5-001 through T-M5-004. |
+| M0 - Webhook foundation | Done | `npm run check` passes with schema parse, format check, webhook signature, delivery de-duplication, domain-event normalization, and idempotent planning-started comment tests. | None. |
+| M0.5 - State store | Done | `npm run check` passes with SQLite migrations, lease acquisition/expiry, CAS state updates, idempotent action records, and reconciliation dry-run tests. | None. |
+| M1 - State machine and labels | Done | `npm run check` passes with transition table, state-label sync, pause/block handling, head-sha invalidation, and reconciliation state repair tests. | None. |
+| M2 - Planner and plan reviewer | Done | `npm run check` passes with agent adapter interface, planner envelope validation, plan result validation, reviewer verdict validation, and plan/comment marker tests. | None. |
+| M3 - Implementer creates PR | Done | `npm run check` passes with workspace manager, implementer envelope/result validation, path policy enforcement, idempotent branch/commit/PR write adapter tests, and PR body template tests. | None. |
+| M4 - PR review and CI gate | Done | `npm run check` passes with PR reviewer envelope/verdict validation, current-head check aggregation, fix-loop decisions, and stale-head protection tests. | None. |
+| M5 - Merge and closeout | Done | `npm run check` passes with merge gate evaluator, current-head Merge API execution, branch cleanup, final summary marker, and issue close tests. | None. |

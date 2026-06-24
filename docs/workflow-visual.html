@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AgentOrchestrator 工作原理示意</title>
+    <style>
+      :root {
+        --ink: #17202a;
+        --muted: #64748b;
+        --line: #cbd5e1;
+        --paper: #f8fafc;
+        --panel: #ffffff;
+        --blue: #2563eb;
+        --green: #15803d;
+        --amber: #b45309;
+        --red: #b91c1c;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.5;
+      }
+
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 32px 20px 48px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 30px;
+      }
+
+      h2 {
+        margin: 32px 0 16px;
+        font-size: 20px;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .diagram {
+        display: grid;
+        gap: 12px;
+        margin-top: 20px;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .node {
+        min-height: 96px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 14px;
+        position: relative;
+      }
+
+      .node strong {
+        display: block;
+        font-size: 15px;
+        margin-bottom: 6px;
+      }
+
+      .node span {
+        display: block;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .node::after {
+        content: "→";
+        position: absolute;
+        right: -13px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--muted);
+        font-weight: 700;
+      }
+
+      .row .node:last-child::after {
+        content: "";
+      }
+
+      .blue {
+        border-top: 4px solid var(--blue);
+      }
+
+      .green {
+        border-top: 4px solid var(--green);
+      }
+
+      .amber {
+        border-top: 4px solid var(--amber);
+      }
+
+      .red {
+        border-top: 4px solid var(--red);
+      }
+
+      .swimlane {
+        display: grid;
+        grid-template-columns: 180px 1fr;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: 8px;
+        overflow: hidden;
+        margin-top: 16px;
+      }
+
+      .lane-title {
+        padding: 14px;
+        background: #e2e8f0;
+        font-weight: 700;
+      }
+
+      .lane-content {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 10px;
+        padding: 12px;
+      }
+
+      .pill {
+        min-height: 64px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        font-size: 13px;
+        background: #fff;
+      }
+
+      .matrix {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        padding: 16px;
+      }
+
+      .card h3 {
+        margin: 0 0 8px;
+        font-size: 16px;
+      }
+
+      .card ul {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+      }
+
+      @media (max-width: 840px) {
+        .row,
+        .lane-content,
+        .matrix {
+          grid-template-columns: 1fr;
+        }
+
+        .swimlane {
+          grid-template-columns: 1fr;
+        }
+
+        .node::after {
+          content: "↓";
+          right: 14px;
+          top: auto;
+          bottom: -18px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>AgentOrchestrator 工作原理示意</h1>
+      <p>GitHub 是事实来源；Orchestrator 负责确定性调度；Agent 只提出结构化建议；所有写动作经过策略、状态和幂等校验。</p>
+
+      <h2>端到端主流程</h2>
+      <section class="diagram" aria-label="端到端主流程">
+        <div class="row">
+          <div class="node blue"><strong>1. Issue 触发</strong><span>用户添加 agent:autopilot label。</span></div>
+          <div class="node blue"><strong>2. Webhook Intake</strong><span>签名校验、payload 限制、delivery 去重。</span></div>
+          <div class="node blue"><strong>3. Domain Event</strong><span>归一化为内部事件。</span></div>
+          <div class="node green"><strong>4. State Machine</strong><span>lease + CAS 推进状态。</span></div>
+        </div>
+        <div class="row">
+          <div class="node green"><strong>5. Plan</strong><span>Planner 输出计划，Plan Reviewer 审核。</span></div>
+          <div class="node amber"><strong>6. Implement</strong><span>受控 workspace 产出 diff，实际 changed files 过 policy。</span></div>
+          <div class="node amber"><strong>7. PR Gate</strong><span>PR review 和 checks 绑定 current head sha。</span></div>
+          <div class="node red"><strong>8. Merge Closeout</strong><span>Merge API、branch cleanup、final summary、close Issue。</span></div>
+        </div>
+      </section>
+
+      <h2>责任分层</h2>
+      <section class="swimlane">
+        <div class="lane-title">GitHub</div>
+        <div class="lane-content">
+          <div class="pill">Issue / Label</div>
+          <div class="pill">Webhook</div>
+          <div class="pill">PR / Review</div>
+          <div class="pill">Checks / Status</div>
+          <div class="pill">Merge / Close</div>
+        </div>
+      </section>
+      <section class="swimlane">
+        <div class="lane-title">Orchestrator</div>
+        <div class="lane-content">
+          <div class="pill">Verify + Dedup</div>
+          <div class="pill">State + Lease</div>
+          <div class="pill">Policy Gate</div>
+          <div class="pill">Idempotent Writes</div>
+          <div class="pill">Reconciliation</div>
+        </div>
+      </section>
+      <section class="swimlane">
+        <div class="lane-title">Agents</div>
+        <div class="lane-content">
+          <div class="pill">Planner</div>
+          <div class="pill">Plan Reviewer</div>
+          <div class="pill">Implementer</div>
+          <div class="pill">PR Reviewer</div>
+          <div class="pill">Merge Agent (deterministic)</div>
+        </div>
+      </section>
+
+      <h2>关键保护机制</h2>
+      <section class="matrix">
+        <div class="card">
+          <h3>幂等</h3>
+          <ul>
+            <li>每个写动作有 idempotency key。</li>
+            <li>同 key 同 hash 复用结果。</li>
+            <li>同 key 不同 hash 进入冲突。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Head SHA 绑定</h3>
+          <ul>
+            <li>Review、checks、merge-ready 只对当前 head 有效。</li>
+            <li>PR synchronize 会清理旧结论。</li>
+            <li>Merge API 必须传当前 head。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>策略阻断</h3>
+          <ul>
+            <li>deny/high-risk path 自动阻断。</li>
+            <li>pause/no-merge/needs-human 阻止自动推进。</li>
+            <li>Agent 输出不能扩大权限。</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

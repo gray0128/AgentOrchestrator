@@ -1,1 +1,11 @@
 .DS_Store
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+data/*.sqlite
+data/*.sqlite-*
+workspaces/

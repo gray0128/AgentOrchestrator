@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "database": {
+    "path": "./data/orchestrator.sqlite"
+  },
+  "workspaces": {
+    "root": "./workspaces",
+    "cleanup_after_days": 7
+  },
+  "repositories": [
+    {
+      "owner": "example-owner",
+      "name": "example-repo",
+      "local_path": "../example-repo",
+      "default_branch": "main",
+      "policy_file": ".github/agent-orchestrator.yml"
+    }
+  ],
+  "agents": {
+    "planner": {
+      "adapter": "codex",
+      "command": "codex",
+      "args": [],
+      "mode": "read_only",
+      "network": "deny"
+    },
+    "plan_reviewer": {
+      "adapter": "codex",
+      "command": "codex",
+      "args": [],
+      "mode": "read_only",
+      "network": "deny"
+    },
+    "implementer": {
+      "adapter": "codex",
+      "command": "codex",
+      "args": [],
+      "mode": "write_worktree",
+      "network": "deny"
+    },
+    "pr_reviewer": {
+      "adapter": "codex",
+      "command": "codex",
+      "args": [],
+      "mode": "read_only",
+      "network": "deny"
+    },
+    "merge_agent": {
+      "adapter": "builtin",
+      "mode": "deterministic"
+    }
+  }
+}

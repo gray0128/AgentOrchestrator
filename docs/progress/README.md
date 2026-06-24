@@ -10,4 +10,4 @@ Files:
 - `test-acceptance-log.md`: exact verification commands and outcomes.
 - `blockers.md`: active and resolved blockers.
 
-Current phase: pre-implementation contract setup.
+Current phase: MVP implementation complete; audit and hardening next.

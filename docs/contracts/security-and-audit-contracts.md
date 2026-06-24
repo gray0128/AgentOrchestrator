@@ -27,6 +27,15 @@ Optional:
 | --- | --- | --- |
 | Administration | read | Direct branch protection config reads when explicitly enabled. |
 
+## Webhook Intake
+
+- Webhook signature verification uses the raw request body bytes and the GitHub `X-Hub-Signature-256` header.
+- The accepted signature format is `sha256=<hex-hmac>`.
+- Signature comparison must use constant-time comparison after validating byte lengths.
+- Missing, malformed, or non-matching signatures fail with `WEBHOOK_SIGNATURE_INVALID`.
+- The default raw webhook payload size limit is 25 MiB unless local config sets a lower limit.
+- Payloads above the active limit fail before JSON parsing with `WEBHOOK_PAYLOAD_INVALID`.
+
 ## Prompt Injection Rules
 
 Untrusted content must not:
