@@ -199,9 +199,9 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     repo: input.event.repo,
     pr,
     headSha: commit.headSha,
-    event: "APPROVE",
+    event: "COMMENT",
     body: renderPrReviewBody(prReview, pr),
-    idempotencyKey: `${runId}:pr-reviewer:approve`,
+    idempotencyKey: `${runId}:pr-reviewer:comment`,
     requestHash: createRequestHash({ runId, prReview })
   });
   transition(input.database, runId, WorkflowState.PrReviewing, WorkflowState.CiWaiting, commit.headSha, prReviewEvent, now);

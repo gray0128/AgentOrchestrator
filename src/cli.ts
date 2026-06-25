@@ -685,8 +685,19 @@ function extractIssueLabels(issuePayload: Record<string, unknown>, payload: unkn
 function buildWorkspaceContext(repository: ServeLifecycleRepository, issue: RuntimeLifecycleIssue): RuntimeLifecycleWorkspace {
   return {
     path: repository.localPath,
-    branch: `agent/issue-${issue.number}-${slugify(issue.title)}`
+    branch: `agent/issue-${issue.number}-${slugify(issue.title)}`,
+    base_sha: readDefaultBranchSha(repository)
   };
+}
+
+function readDefaultBranchSha(repository: ServeLifecycleRepository): string | undefined {
+  const result = spawnSync("git", ["-C", repository.localPath, "rev-parse", `origin/${repository.repo.default_branch}`], {
+    encoding: "utf8"
+  });
+  if (result.status !== 0) {
+    return undefined;
+  }
+  return result.stdout.trim();
 }
 
 function parseJsonResponse(text: string): unknown {
