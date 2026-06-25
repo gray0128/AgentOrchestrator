@@ -1,162 +1,251 @@
 # AgentOrchestrator
 
-GitHub-native Agent Orchestrator for automatically processing labeled GitHub Issues through planning, review, implementation, PR review, CI gates, merge, and closeout.
+AgentOrchestrator 是一个 GitHub-native 的 Issue 自动处理编排器。它以 GitHub Issue、Pull Request、Review、Check 和 Label 作为用户可见事实来源，通过本地 Orchestrator 服务接收 GitHub Webhook、推进状态机、调度 coding agent，并把方案、实现、审核、合并和收尾结果写回 GitHub。
 
-## Current Status
+当前仓库已经提供可运行的本地 CLI 和服务边界：
 
-The repository has a runnable local and live end-to-end runtime path. The contract layer, state-machine primitives, fake and REST GitHub adapters, policy checks and policy loader, renderers, state store, process-backed agent adapter, local CLI, GitHub App token-provider foundation, webhook runtime path, full lifecycle orchestration, and GitHub artifact reconciliation are implemented and covered by tests. `serve --github-mode live` wires validated config into GitHub App auth, the REST adapter, repo policy loading, and process-backed agents. A real GitHub App webhook smoke has been verified with a reachable Cloudflare Tunnel, merged PR, issue closeout, and duplicate-delivery safety evidence.
+- `ao init-config`：生成本机 CLI 配置。
+- `ao doctor`：检查本机配置、凭据、目标仓库策略和 agent 命令。
+- `ao validate`：校验本机配置、目标仓库策略和 schema。
+- `ao live-check`：检查真实 GitHub 运行前置条件，不写 GitHub。
+- `ao serve`：启动 Orchestrator 服务，提供 `GET /healthz` 和 `POST /webhook`。
+- `ao live-smoke`：向运行中的服务发送一次签名测试 webhook。
+- `ao reconcile --dry-run`：执行无副作用的本地状态核对。
+- `ao inspect-run`：查看 SQLite 中的 run 状态和 head_sha 证据。
 
-Current runnable surface:
+仍然不在当前范围内的能力：非 GitHub 仓库、托管 Web UI、多仓库事务、绕过 GitHub branch protection / ruleset / required checks。
 
-- `npm run check`
-- `npm run smoke:e2e`
-- `ao init-config ...`
-- `ao doctor ...`
-- `ao validate ...`
-- `ao live-check ...`
-- `ao live-smoke ...`
-- `ao serve ...`
-- `ao reconcile --dry-run ...`
-- `ao inspect-run ...`
-
-Still intentionally limited:
-
-- CLI/live scheduling wrapper for GitHub-backed reconciliation.
-- Non-GitHub providers, hosted UI, and multi-repository transactions.
-
-External GitHub App credentials, webhook secrets, and machine-local tunnel config are intentionally not committed.
-
-## Requirements
+## 环境要求
 
 - Node.js `>=26.0.0`
-- A local checkout of each target repository
-- A GitHub App for real repository operation
-- Agent CLIs such as `codex` or other configured commands
+- 目标 GitHub 仓库的本地 checkout
+- 真实运行时需要一个已安装到目标仓库的 GitHub App
+- 至少一个可执行的 coding agent 命令，例如 `codex`，或能适配本项目 stdin/stdout 契约的自定义命令
 
-## Configuration Files
+## 安装和命令入口
 
-There are two configuration layers.
+开发目录内可以直接运行：
 
-### Local Config
+```sh
+npm run cli -- <command>
+```
 
-Local machine configuration lives outside Git and should follow `docs/contracts/schemas/local-config.schema.json`.
+如果希望使用短命令 `ao`，在本仓库执行一次：
 
-Generate a local config:
+```sh
+npm link
+```
+
+之后即可运行：
+
+```sh
+ao <command>
+```
+
+下面示例统一使用 `ao`。如果没有执行 `npm link`，把 `ao` 替换为 `npm run cli --`。
+
+## 配置总览
+
+AgentOrchestrator 有两层配置：
+
+| 配置 | 路径 | 所属位置 | 作用 |
+| --- | --- | --- | --- |
+| 本机 CLI 配置 | `config/local.json`，也可由 `AGENT_ORCHESTRATOR_CONFIG` 指向其他路径 | AgentOrchestrator 本仓库或运行机器 | 描述 GitHub App 凭据环境变量名、SQLite 路径、工作区路径、要管理的仓库和 agent 命令 |
+| 本机示例配置 | `config/local.example.json` | AgentOrchestrator 本仓库 | 提供可提交的配置结构示例，不放真实仓库和密钥 |
+| 目标仓库策略配置 | 默认 `.github/agent-orchestrator.json`，可在本机配置的 `repositories[].policy_file` 中改名 | 被自动处理的目标仓库 | 描述哪些 Issue 可自动处理、可写路径、禁止路径、required checks、review 和 auto-merge 规则 |
+| 环境变量文件 | `.env` 或 shell 环境；仓库只提交 `.env.example` | 运行机器 | 存放真实 GitHub App 凭据、webhook secret、本机配置路径 |
+
+真实密钥不要写入 Git。`config/local.json` 和 `.env` 都应视为机器本地文件。
+
+## 本机 CLI 配置
+
+### 路径
+
+默认建议路径：
+
+```text
+config/local.json
+```
+
+也可以通过环境变量指定：
+
+```sh
+export AGENT_ORCHESTRATOR_CONFIG=./config/local.json
+```
+
+### 作用
+
+本机 CLI 配置告诉 Orchestrator：
+
+- 用哪些环境变量读取 GitHub App 凭据。
+- SQLite 状态库写到哪里。
+- agent 工作区创建在哪里。
+- 哪些目标仓库由这个 Orchestrator 管理。
+- 每个目标仓库的本地 checkout 在哪里。
+- 每个目标仓库的策略文件在仓库内的哪个路径。
+- Planner、Plan Reviewer、Implementer、PR Reviewer 和 Merge Agent 分别使用什么命令。
+
+### 生成配置
+
+推荐用 CLI 生成初始配置：
 
 ```sh
 ao init-config \
   --repo <owner/name> \
-  --repo-path /absolute/path/to/checkout \
+  --repo-path /absolute/path/to/target-repo \
   --output config/local.json
 ```
 
-Use `--agent-command <command>` when the role agent is not `codex`. Use `--force` only when you intentionally want to replace an existing local config.
+常用参数：
 
-Key fields:
+- `--repo <owner/name>`：目标 GitHub 仓库，例如 `octo-org/demo-repo`。
+- `--repo-path <path>`：目标仓库在本机的 checkout 路径。建议使用绝对路径。
+- `--output <path>`：生成的本机配置路径。默认可使用 `config/local.json`。
+- `--agent-command <command>`：各角色 agent 默认使用的命令，默认是 `codex`。
+- `--default-branch <branch>`：目标仓库默认分支，默认是 `main`。
+- `--policy-file <path>`：目标仓库内的策略配置路径，默认是 `.github/agent-orchestrator.json`。
+- `--force`：覆盖已经存在的输出文件。
 
-- `github.auth.*_env`: environment variable names for GitHub App credentials used by live mode.
-- `database.path`: SQLite state database path.
-- `workspaces.root`: root directory for controlled agent workspaces.
-- `repositories[]`: repositories managed by this Orchestrator.
-- `repositories[].owner` and `repositories[].name`: GitHub repository identity.
-- `repositories[].local_path`: local checkout path for workspace operations.
-- `repositories[].default_branch`: target base branch.
-- `repositories[].policy_file`: repo policy file path inside the managed repo.
-- `agents`: role-to-adapter command configuration.
-- `agent_routing`: optional routing catalog and task profile priority rules.
+### 配置内容
 
-Example validation:
-
-```sh
-ao doctor --config config/local.json
-```
-
-### Coding Agent Routing
-
-AgentOrchestrator runs coding agents through process adapters. The built-in adapter names are:
-
-- `codex`: Codex CLI compatible command.
-- `claude`: Claude Code compatible command.
-- `custom`: any command or wrapper that follows the AgentOrchestrator stdin/stdout contract.
-
-Every configured agent process receives JSON on stdin:
+`ao init-config` 生成的基本结构如下：
 
 ```json
-{ "envelope": { "...": "task envelope" }, "prompt": "role prompt" }
-```
-
-It must print exactly one contract JSON object to stdout, for example `agent-orchestrator.plan-result.v1`, `agent-orchestrator.implementation-result.v1`, or `agent-orchestrator.reviewer-verdict.v1`.
-
-For local coding CLIs that do not natively speak that contract, use the included wrapper:
-
-```sh
-tools/coding-agent-adapter.mjs --provider codex_desktop
-tools/coding-agent-adapter.mjs --provider grok_build
-tools/coding-agent-adapter.mjs --provider reasonix
-tools/coding-agent-adapter.mjs --provider claude_code
-```
-
-Optional routing config lets different task profiles choose candidates by priority. `default_profile` applies when no label-specific profile matches.
-
-```json
-"agent_routing": {
-  "default_profile": "complex",
-  "catalog": {
-    "codex_desktop": {
-      "adapter": "codex",
-      "command": "/path/to/tools/coding-agent-adapter.mjs",
-      "args": ["--provider", "codex_desktop"],
-      "mode": "write_worktree",
-      "network": "restricted"
-    },
-    "grok_build": {
-      "adapter": "custom",
-      "command": "/path/to/tools/coding-agent-adapter.mjs",
-      "args": ["--provider", "grok_build"],
-      "mode": "write_worktree",
-      "network": "restricted"
+{
+  "version": 1,
+  "github": {
+    "api_base_url": "https://api.github.com",
+    "auth": {
+      "mode": "app",
+      "app_id_env": "AGENT_ORCHESTRATOR_GITHUB_APP_ID",
+      "private_key_env": "AGENT_ORCHESTRATOR_GITHUB_PRIVATE_KEY",
+      "installation_id_env": "AGENT_ORCHESTRATOR_GITHUB_INSTALLATION_ID"
     }
   },
-  "profiles": {
-    "complex": {
-      "labels_any": ["agent:complex", "risk:high", "risk:medium", "type:feature", "type:bug"],
-      "roles": {
-        "planner": ["codex_desktop", "grok_build"],
-        "implementer": ["codex_desktop", "grok_build"],
-        "plan_reviewer": ["codex_desktop", "grok_build"],
-        "pr_reviewer": ["codex_desktop", "grok_build"]
-      }
+  "database": {
+    "path": "./data/orchestrator.sqlite"
+  },
+  "workspaces": {
+    "root": "./workspaces",
+    "cleanup_after_days": 7
+  },
+  "repositories": [
+    {
+      "owner": "example-owner",
+      "name": "example-repo",
+      "local_path": "/absolute/path/to/target-repo",
+      "default_branch": "main",
+      "policy_file": ".github/agent-orchestrator.json"
+    }
+  ],
+  "agents": {
+    "planner": {
+      "adapter": "codex",
+      "command": "codex",
+      "args": [],
+      "mode": "read_only",
+      "network": "deny"
+    },
+    "plan_reviewer": {
+      "adapter": "codex",
+      "command": "codex",
+      "args": [],
+      "mode": "read_only",
+      "network": "deny"
+    },
+    "implementer": {
+      "adapter": "codex",
+      "command": "codex",
+      "args": [],
+      "mode": "write_worktree",
+      "network": "deny"
+    },
+    "pr_reviewer": {
+      "adapter": "codex",
+      "command": "codex",
+      "args": [],
+      "mode": "read_only",
+      "network": "deny"
+    },
+    "merge_agent": {
+      "adapter": "builtin",
+      "mode": "deterministic"
     }
   }
 }
 ```
 
-The current local profile is configured as:
+关键字段说明：
+
+- `github.api_base_url`：GitHub API 地址。GitHub.com 使用 `https://api.github.com`。
+- `github.auth.app_id_env`：保存 GitHub App ID 的环境变量名。
+- `github.auth.private_key_env`：保存 GitHub App private key 内容的环境变量名。
+- `github.auth.installation_id_env`：保存 GitHub App installation ID 的环境变量名。
+- `database.path`：本地 SQLite 状态库路径，用于 run、lease、幂等记录和状态转移。
+- `workspaces.root`：受控 agent 工作区根目录。
+- `workspaces.cleanup_after_days`：工作区清理保留天数。
+- `repositories[].owner` / `repositories[].name`：目标 GitHub 仓库身份。
+- `repositories[].local_path`：目标仓库本地 checkout 路径，Orchestrator 会在这里读取策略和准备工作区上下文。
+- `repositories[].default_branch`：目标仓库默认基线分支。
+- `repositories[].policy_file`：目标仓库内策略配置文件路径。
+- `agents.*.adapter`：agent 类型，支持 `codex`、`claude`、`custom`。
+- `agents.*.command` / `agents.*.args`：实际执行的命令和参数。
+- `agents.*.mode`：`read_only` 只读角色，`write_worktree` 可写工作区角色。
+- `agents.*.network`：agent 网络策略标记，支持 `deny`、`allow`、`restricted`。
+- `merge_agent`：当前为内置确定性合并 gate，不是外部 LLM 命令。
+
+本机配置的 schema 在：
 
 ```text
-codex_desktop > grok_build > reasonix > claude_code
+docs/contracts/schemas/local-config.schema.json
 ```
 
-For normal roles, routing selects the first executable candidate. For PR review, `review.required_pr_approvals` can require multiple independent reviewer approvals; the runtime takes that many executable `pr_reviewer` candidates from the default profile in priority order.
+## 目标仓库策略配置
 
-### Repo Policy
+### 路径
 
-Each managed repository should provide a repo policy matching `docs/contracts/schemas/repo-policy.schema.json`.
+默认路径：
 
-Policy controls:
+```text
+.github/agent-orchestrator.json
+```
 
-- `autopilot.trigger_labels`: labels that allow Orchestrator to accept an Issue, usually `agent:autopilot`.
-- `merge.auto_merge.allowed_risks`: risks that may be merged automatically.
-- `merge.auto_merge.blocked_labels`: labels that always block merge.
-- `paths.allow`: write paths agents may touch.
-- `paths.deny`: paths that block automation.
-- `paths.high_risk`: paths that require human handling.
-- `checks.required`: required check names.
-- `review.max_fix_rounds`: fix loop budget.
-- `review.required_pr_approvals`: number of independent coding-agent PR approvals required before merge; defaults to `1` when PR review is enabled.
-- `review.agent_review_counts_as_human_review`: must be `false`.
+这个文件放在被自动处理的目标仓库中，不放在 AgentOrchestrator 仓库中。实际路径由本机配置中的字段决定：
 
-Minimal policy shape:
+```json
+{
+  "repositories": [
+    {
+      "policy_file": ".github/agent-orchestrator.json"
+    }
+  ]
+}
+```
+
+### 作用
+
+目标仓库策略配置告诉 Orchestrator：
+
+- 哪些 Issue label 会触发自动处理。
+- 是否限制允许触发自动化的 actor。
+- 自动合并允许哪些风险等级。
+- 哪些 label 会强制阻断自动合并。
+- coding agent 可以修改哪些路径。
+- 哪些路径禁止自动化修改。
+- 哪些路径属于高风险，需要人工介入。
+- 哪些 GitHub checks 必须通过。
+- 方案审核、PR 审核、修复轮次和 PR reviewer 数量规则。
+
+### 配置内容
+
+目标仓库中创建：
+
+```sh
+mkdir -p .github
+$EDITOR .github/agent-orchestrator.json
+```
+
+最小可用示例：
 
 ```json
 {
@@ -186,139 +275,186 @@ Minimal policy shape:
     "max_fix_rounds": 3,
     "require_plan_review": true,
     "require_pr_review": true,
+    "required_pr_approvals": 1,
     "agent_review_counts_as_human_review": false
   }
 }
 ```
 
-Validate both layers:
+关键字段说明：
 
-```sh
-ao validate \
-  --config config/local.example.json \
-  --policy /path/to/repo/.github/agent-orchestrator.json \
-  --schema-dir docs/contracts/schemas
+- `autopilot.enabled`：是否允许该仓库被 Orchestrator 自动处理。
+- `autopilot.trigger_labels`：触发自动处理的 Issue label，通常是 `agent:autopilot`。
+- `autopilot.allowed_actors`：可选，限制哪些 GitHub 用户可以触发自动化。
+- `merge.default_method`：合并方式，支持 `squash`、`merge`、`rebase`。
+- `merge.auto_merge.enabled`：是否允许自动合并。
+- `merge.auto_merge.allowed_risks`：允许自动合并的风险等级。
+- `merge.auto_merge.blocked_labels`：出现这些 label 时阻断自动合并。
+- `paths.allow`：agent 允许修改的路径 glob。
+- `paths.deny`：agent 禁止修改的路径 glob。
+- `paths.high_risk`：触及时标记为高风险的路径 glob。
+- `checks.required`：必须通过的检查名称。
+- `checks.source`：required check 来源，支持 `github_merge_gate`、`policy_required_names`、`branch_protection_read`。
+- `checks.skipped_counts_as_success`：可选，是否把 skipped check 视为成功。
+- `checks.neutral_counts_as_success`：可选，是否把 neutral check 视为成功。
+- `review.max_fix_rounds`：自动修复循环上限。
+- `review.require_plan_review`：是否要求方案审核。
+- `review.require_pr_review`：是否要求 PR 审核。
+- `review.required_pr_approvals`：需要多少个独立 coding-agent PR 审核通过。
+- `review.agent_review_counts_as_human_review`：必须为 `false`，agent review 不伪装成人类审核。
+
+目标仓库策略的 schema 在：
+
+```text
+docs/contracts/schemas/repo-policy.schema.json
 ```
 
-`doctor` is the preferred operator readiness check. It validates local config, GitHub App credential environment variables, webhook secret presence, repo policy loading, and agent command availability in one redacted JSON report:
+## 环境变量配置
 
-```sh
-ao doctor --config config/local.json
+本仓库提交了 `.env.example` 作为提示：
+
+```env
+NODE_ENV=development
+AGENT_ORCHESTRATOR_CONFIG=./config/local.example.json
 ```
 
-Before a real repository smoke, validate live prerequisites without making GitHub writes:
+真实运行时至少需要：
 
 ```sh
-ao live-check --config config/local.json
+export AGENT_ORCHESTRATOR_CONFIG=./config/local.json
+export AGENT_ORCHESTRATOR_GITHUB_APP_ID=<github-app-id>
+export AGENT_ORCHESTRATOR_GITHUB_PRIVATE_KEY="$(cat /path/to/private-key.pem)"
+export AGENT_ORCHESTRATOR_GITHUB_INSTALLATION_ID=<installation-id>
+export AGENT_ORCHESTRATOR_WEBHOOK_SECRET=<webhook-secret>
 ```
 
-This checks GitHub App env references, offline JWT signing, `AGENT_ORCHESTRATOR_WEBHOOK_SECRET`, repo policy loading, and configured agent command availability without printing credential values.
+说明：
 
-## CLI
+- `AGENT_ORCHESTRATOR_CONFIG`：本机 CLI 配置路径。也可以每次用 `--config` 显式传入。
+- `AGENT_ORCHESTRATOR_GITHUB_APP_ID`：GitHub App ID。
+- `AGENT_ORCHESTRATOR_GITHUB_PRIVATE_KEY`：GitHub App private key 内容。
+- `AGENT_ORCHESTRATOR_GITHUB_INSTALLATION_ID`：GitHub App 安装到目标仓库后的 installation ID。
+- `AGENT_ORCHESTRATOR_WEBHOOK_SECRET`：GitHub App webhook secret，服务会用它校验 `X-Hub-Signature-256`。
 
-The tool is provided locally through the `ao` command. From this checkout, run `npm link` once to put the package bin on your shell path, or use `npm exec -- ao` without linking.
+## 完成配置
+
+按这个顺序完成配置：
+
+1. 准备目标仓库本地 checkout。
 
 ```sh
-ao <command>
+git clone git@github.com:<owner>/<repo>.git /absolute/path/to/target-repo
 ```
 
-### `init-config`
-
-Creates a machine-local config file from a small set of required inputs.
+2. 在目标仓库创建策略文件。
 
 ```sh
+cd /absolute/path/to/target-repo
+mkdir -p .github
+$EDITOR .github/agent-orchestrator.json
+```
+
+3. 在 AgentOrchestrator 仓库生成本机配置。
+
+```sh
+cd /Users/libo/Documents/github/AgentOrchestrator
 ao init-config \
   --repo <owner/name> \
-  --repo-path /absolute/path/to/checkout \
+  --repo-path /absolute/path/to/target-repo \
   --output config/local.json
 ```
 
-Common options:
+4. 设置环境变量。
 
-- `--agent-command <command>`: command used for planner, plan reviewer, implementer, and PR reviewer roles. Defaults to `codex`.
-- `--default-branch <branch>`: defaults to `main`.
-- `--policy-file <path>`: path inside the target repo. Defaults to `.github/agent-orchestrator.json`.
-- `--force`: replace an existing output file.
+```sh
+export AGENT_ORCHESTRATOR_CONFIG=./config/local.json
+export AGENT_ORCHESTRATOR_GITHUB_APP_ID=<github-app-id>
+export AGENT_ORCHESTRATOR_GITHUB_PRIVATE_KEY="$(cat /path/to/private-key.pem)"
+export AGENT_ORCHESTRATOR_GITHUB_INSTALLATION_ID=<installation-id>
+export AGENT_ORCHESTRATOR_WEBHOOK_SECRET=<webhook-secret>
+```
 
-The generated config references environment variable names for secrets. It does not write secret values.
+5. 校验两层配置。
 
-### `doctor`
+```sh
+ao validate \
+  --config config/local.json \
+  --policy /absolute/path/to/target-repo/.github/agent-orchestrator.json \
+  --schema-dir docs/contracts/schemas
+```
 
-Runs a non-writing live readiness check with actionable pass/fail items.
+6. 运行 operator readiness 检查。
 
 ```sh
 ao doctor --config config/local.json
 ```
 
-Behavior:
-
-- Validates local config.
-- Confirms GitHub App credential environment variables are present and the private key can sign a JWT.
-- Confirms `AGENT_ORCHESTRATOR_WEBHOOK_SECRET` is present.
-- Loads each configured repo policy from its checkout path.
-- Verifies all configured agent commands are executable.
-- Prints redacted JSON and exits nonzero when any required item fails.
-
-### `validate`
-
-```sh
-ao validate [--config <path>] [--policy <path>] [--schema-dir <path>]
-```
-
-Behavior:
-
-- Validates local config when `--config` is provided.
-- Validates repo policy when `--policy` is provided.
-- Parses all JSON schemas when `--schema-dir` is provided.
-- Prints `{"ok":true,"command":"validate"}` on success.
-- Exits nonzero with registered error codes on validation failures.
-- Redacts secret-looking values from error output.
-
-### `serve`
-
-Starts the local Orchestrator service.
-
-```sh
-ao serve --config config/local.example.json --host 127.0.0.1 --port 3000
-```
-
-For a non-blocking startup check that validates config and migrates SQLite:
-
-```sh
-ao serve --config config/local.example.json --once
-```
-
-Current behavior:
-
-- Loads and validates local config.
-- Opens and migrates the SQLite state database.
-- Starts `GET /healthz`.
-- Starts `POST /webhook`.
-- Without `AGENT_ORCHESTRATOR_WEBHOOK_SECRET`, webhook intake returns `WEBHOOK_SECRET_MISSING`.
-- With `AGENT_ORCHESTRATOR_WEBHOOK_SECRET`, webhook intake verifies `X-Hub-Signature-256`, deduplicates `X-GitHub-Delivery`, parses payload JSON, and normalizes supported domain events.
-- With `--github-mode live`, wires GitHub App auth, REST GitHub writes, repo policy loading, and configured process agents.
-- With lifecycle adapters configured, signed autopilot Issue webhook intake can advance through the full low-risk lifecycle.
-- Does not log tokens, private keys, webhook secrets, or installation tokens.
-
-### `live-check`
-
-Validates live prerequisites without requesting a GitHub token or writing to GitHub.
+7. 在真实 GitHub 运行前做 live check。
 
 ```sh
 ao live-check --config config/local.json
 ```
 
-Behavior:
+`doctor` 会检查本机配置、GitHub App 凭据环境变量、webhook secret、目标仓库策略加载和 agent 命令可执行性。`live-check` 不写 GitHub，主要用于真实 webhook 启动前确认 live 模式前置条件。
 
-- Validates local config.
-- Resolves GitHub App credential environment references and validates offline JWT signing without printing credential values.
-- Requires `AGENT_ORCHESTRATOR_WEBHOOK_SECRET`.
-- Loads each configured repo policy.
-- Verifies configured agent commands are present on the host.
+## 开始使用
 
-### `live-smoke`
+### 本地启动检查
 
-Sends one signed `agent:autopilot` Issue webhook to a running service.
+先做一次非阻塞启动检查。它会校验配置并迁移 SQLite，但不会常驻监听端口：
+
+```sh
+ao serve --config config/local.json --once
+```
+
+### 启动 Orchestrator 服务
+
+开发或本机运行：
+
+```sh
+ao serve --config config/local.json --host 127.0.0.1 --port 3000
+```
+
+真实 GitHub App webhook 运行：
+
+```sh
+ao serve --config config/local.json --github-mode live --host 127.0.0.1 --port 3000
+```
+
+服务启动后提供：
+
+- `GET /healthz`：健康检查。
+- `POST /webhook`：GitHub App webhook 入口。
+
+`POST /webhook` 会校验 `AGENT_ORCHESTRATOR_WEBHOOK_SECRET`、`X-Hub-Signature-256` 和 `X-GitHub-Delivery`，并对 delivery 做去重。
+
+### 暴露 Webhook URL
+
+开发期可以用 Cloudflare Tunnel、ngrok 或其他隧道工具把本地服务暴露到公网，然后在 GitHub App 的 Webhook URL 中填写：
+
+```text
+https://<your-public-domain>/webhook
+```
+
+GitHub App 的 webhook secret 必须和 `AGENT_ORCHESTRATOR_WEBHOOK_SECRET` 一致。
+
+### 触发一次自动处理
+
+在目标仓库中：
+
+1. 创建或选择一个低风险 Issue。
+2. 确认 Issue 不带 `agent:no-merge`、`needs-human`、`risk:high` 等阻断 label。
+3. 给 Issue 添加目标仓库策略中配置的触发 label，例如：
+
+```text
+agent:autopilot
+```
+
+Webhook 到达后，Orchestrator 会按策略推进：规划、方案审核、实现、PR 审核、检查 gate、合并和 Issue closeout。
+
+### 发送一次本地签名 smoke
+
+如果服务已经启动，可以用 CLI 构造一次签名 webhook 请求：
 
 ```sh
 ao live-smoke \
@@ -328,100 +464,94 @@ ao live-smoke \
   --title "Low-risk smoke issue"
 ```
 
-Behavior:
+`live-smoke` 不会创建 GitHub Issue，只会向运行中的服务发送一次带签名的 Issue webhook payload。
 
-- Requires `AGENT_ORCHESTRATOR_WEBHOOK_SECRET`.
-- Signs the payload with `X-Hub-Signature-256`.
-- Sends `X-GitHub-Event: issues` and `X-GitHub-Delivery`.
-- Prints the HTTP status and parsed service response.
-- Does not create the GitHub Issue; use it only after the target low-risk Issue exists or when exercising a local service.
+### 查看运行状态
 
-### `reconcile`
-
-Runs one reconciliation pass. Without a real GitHub adapter, this currently supports dry-run mode only.
-
-From local SQLite runs:
+按 run id 查看：
 
 ```sh
-ao reconcile --config config/local.example.json --dry-run
+ao inspect-run --config config/local.json --run-id <run_id>
 ```
 
-From a snapshot file:
+按仓库和 Issue 查看：
 
 ```sh
-ao reconcile --dry-run --input ./reconcile-snapshot.json
+ao inspect-run --config config/local.json --repo <owner/name> --issue <number>
 ```
 
-Output includes examined object counts, proposed transition counts, and candidate issue/PR/expired-lease report data.
-
-### `inspect-run`
-
-Prints local workflow state, transitions, idempotent actions, and stale-head evidence from SQLite.
-
-By run id:
+执行无副作用核对：
 
 ```sh
-ao inspect-run --config config/local.example.json --run-id <run_id>
+ao reconcile --config config/local.json --dry-run
 ```
 
-By repo and issue:
+## Agent 命令契约
+
+AgentOrchestrator 通过进程适配器运行 coding agent。每个 agent 进程会从 stdin 收到一个 JSON 对象：
+
+```json
+{
+  "envelope": {
+    "...": "task envelope"
+  },
+  "prompt": "role prompt"
+}
+```
+
+agent 必须向 stdout 输出一个符合契约的 JSON 对象，例如：
+
+- `agent-orchestrator.plan-result.v1`
+- `agent-orchestrator.implementation-result.v1`
+- `agent-orchestrator.reviewer-verdict.v1`
+
+如果本地 coding CLI 不直接支持这个契约，可以使用仓库内 wrapper：
 
 ```sh
-ao inspect-run --config config/local.example.json --repo <owner/name> --issue <number>
+tools/coding-agent-adapter.mjs --provider codex_desktop
+tools/coding-agent-adapter.mjs --provider grok_build
+tools/coding-agent-adapter.mjs --provider reasonix
+tools/coding-agent-adapter.mjs --provider claude_code
 ```
 
-Possible future addition:
+需要多 agent 优先级时，可在本机配置中添加 `agent_routing`。普通角色会选择第一个可执行候选；PR review 会根据 `review.required_pr_approvals` 从默认 profile 中取多个可执行 reviewer。
 
-- `policy validate`: validate only repo policy with clearer policy-specific output.
+## 验证
 
-## Can It Run End To End Now?
-
-Locally, yes: `npm run smoke:e2e` drives a low-risk Issue through webhook intake, planning, plan review, implementation PR, current-head review/check gate, merge, branch cleanup, final summary, and issue close against a mocked GitHub boundary.
-
-Externally, yes for the current verified single-repository setup: a GitHub App webhook reached the live service through `https://ao.bobocai.win`, drove a low-risk Issue to a merged PR and closed Issue, and duplicate delivery handling was verified.
-
-Live verification recipe:
-
-1. Run `ao init-config --repo <owner/name> --repo-path <checkout-path> --output config/local.json`.
-2. Set the GitHub App credential environment variables and `AGENT_ORCHESTRATOR_WEBHOOK_SECRET`.
-3. Run `ao doctor --config config/local.json`.
-4. Run `ao live-check --config config/local.json`.
-5. Start `ao serve --config config/local.json --github-mode live`.
-6. Configure the GitHub App webhook URL to the reachable `/webhook` endpoint.
-7. Add `agent:autopilot` and an allowed risk label to a low-risk Issue.
-8. Confirm the run with `ao inspect-run --config config/local.json --repo <owner/name> --issue <number>`.
-9. Verify duplicate delivery does not duplicate GitHub writes.
-
-## Development Verification
-
-Run the full local gate:
+开发验证：
 
 ```sh
 npm run check
 ```
 
-This runs:
+端到端本地 smoke：
 
-- JSON schema parse check.
-- Repository format check.
-- Node built-in test suite with TypeScript strip mode.
+```sh
+npm run smoke:e2e
+```
 
-Current expected result: all tests pass.
+配置验证：
 
-## Security Model
+```sh
+ao validate --config config/local.json --schema-dir docs/contracts/schemas
+ao validate --policy /absolute/path/to/target-repo/.github/agent-orchestrator.json
+ao doctor --config config/local.json
+ao live-check --config config/local.json
+```
 
-- GitHub remains the user-visible source of truth.
-- SQLite is only local scheduling, lease, state, and idempotency storage.
-- Agents do not receive GitHub installation tokens.
-- Agent outputs are untrusted until schema, policy, and repository-state checks pass.
-- Merge must go through the GitHub merge API with the current PR head SHA.
-- High-risk paths, denied paths, stale heads, requested changes, failed checks, and blocked labels stop automation.
-- Rendered comments and CLI validation errors redact secret-looking values.
+## 安全边界
 
-## Important Documents
+- GitHub 是用户可见事实来源，SQLite 只是本地调度、lease、状态和幂等缓存。
+- agent 不持有 GitHub installation token。
+- agent 输出在写回 GitHub 前必须经过 schema、策略和仓库状态校验。
+- merge 必须通过 GitHub merge API，并绑定当前 PR `head_sha`。
+- denied path、高风险路径、stale head、requested changes、failed checks 和 blocked labels 都会阻断自动化。
+- CLI 错误和渲染内容会脱敏 secret-looking value。
 
-- `github-native-agent-orchestrator-自动处理-issue-方案.md`: product and architecture plan.
-- `docs/contracts/`: state, data, security, schema, and artifact contracts.
-- `docs/api-design/`: internal APIs and planned CLI commands.
-- `docs/development-plan/`: implementation order and engineering standards.
-- `docs/progress/`: current task, milestone, contract, blocker, and verification status.
+## 重要文档
+
+- `github-native-agent-orchestrator-自动处理-issue-方案.md`：产品和架构方案。
+- `docs/contracts/`：状态、数据、安全、schema 和 artifact 契约。
+- `docs/api-design/`：内部 API 和 CLI 设计。
+- `docs/development-plan/`：开发计划和工程规则。
+- `docs/progress/`：任务、里程碑、契约清单、阻塞和验收记录。
