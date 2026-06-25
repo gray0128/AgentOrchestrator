@@ -18,7 +18,7 @@ if (!contractJson) {
   process.exit(1);
 }
 
-process.stdout.write(`${JSON.stringify(contractJson)}\n`);
+process.stdout.write(`${JSON.stringify(normalizeContractJson(contractJson))}\n`);
 
 function runProvider(provider, taskPrompt, cwd) {
   if (provider === "codex_desktop") {
@@ -132,7 +132,14 @@ function roleContract(envelope) {
     verdict: "APPROVED|REQUEST_CHANGES|BLOCKED",
     risk: "low|medium|high",
     summary: "string",
-    blocking_findings: [],
+    blocking_findings: [
+      {
+        severity: "low|medium|high",
+        message: "string",
+        file: "optional string path",
+        line: "optional positive integer"
+      }
+    ],
     required_tests: envelope.policy.required_tests,
     created_at: new Date().toISOString()
   };
@@ -161,6 +168,28 @@ function extractContractJson(stdout) {
     }
   }
   return undefined;
+}
+
+function normalizeContractJson(value) {
+  if (!value || typeof value !== "object" || !Array.isArray(value.blocking_findings)) {
+    return value;
+  }
+  return {
+    ...value,
+    blocking_findings: value.blocking_findings.map((finding) => {
+      if (!finding || typeof finding !== "object") {
+        return finding;
+      }
+      const normalized = { ...finding };
+      if (normalized.file !== undefined && typeof normalized.file !== "string") {
+        delete normalized.file;
+      }
+      if (normalized.line !== undefined && (!Number.isInteger(normalized.line) || normalized.line < 1)) {
+        delete normalized.line;
+      }
+      return normalized;
+    })
+  };
 }
 
 function jsonObjectCandidates(text) {
