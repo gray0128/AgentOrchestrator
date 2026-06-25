@@ -35,12 +35,6 @@ jobs:
             artifact_name: ao-darwin-arm64
             archive_ext: tar.gz
             executable: ao
-          - os: macos-13
-            platform: darwin
-            arch: x64
-            artifact_name: ao-darwin-x64
-            archive_ext: tar.gz
-            executable: ao
 
     steps:
       - uses: actions/checkout@v4
@@ -86,7 +80,7 @@ jobs:
     name: Publish GitHub Release
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
 
     steps:
       - uses: actions/download-artifact@v4
