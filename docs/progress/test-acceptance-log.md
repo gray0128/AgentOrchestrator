@@ -64,3 +64,4 @@ Updated: 2026-06-25
 | 2026-06-25 | Cross-platform CLI release binaries | `NODE_SEA_NODE=/path/to/official/node npm run build:sea`; `./dist/ao --help`; `npm run check` | Passed | Added esbuild + Node SEA build script, embedded UI assets via `node:sea`, GitHub Actions release workflow for linux/windows/darwin x64+arm64, and README binary install docs; full check passed with 151 tests. |
 | 2026-06-25 | Agent submission attribution footer | `npm run check` | Passed | Agent-produced comments, PR bodies, and reviews append visible agent/model footer before markers; `coding-agent-adapter` emits `_agent_meta`; full check passed with 158 tests. |
 | 2026-06-25 | Release v0.1.0 | `npm run check`; push tag `v0.1.0` | Passed | First public release with cross-platform SEA binaries and agent attribution footer. |
+| 2026-06-25 | Release v0.1.1 | `npm run check`; push tag `v0.1.1` | Passed | Re-release with `macos-15-intel` darwin-x64 build and four-platform SEA artifacts. |
