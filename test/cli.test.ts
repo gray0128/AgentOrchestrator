@@ -16,7 +16,7 @@ import {
   openStateDatabase,
   runCli,
   startServeRuntime,
-  createSignature
+  createSignature,
 } from "../src/index.ts";
 
 test("help CLI lists productized setup commands", async () => {
@@ -25,12 +25,13 @@ test("help CLI lists productized setup commands", async () => {
 
   const exitCode = await runCli(["help"], {
     stdout: (line) => output.push(line),
-    stderr: (line) => errors.push(line)
+    stderr: (line) => errors.push(line),
   });
 
   assert.equal(exitCode, 0);
   assert.match(output.join("\n"), /ao init-config/);
   assert.match(output.join("\n"), /ao doctor/);
+  assert.match(output.join("\n"), /ao ui/);
   assert.deepEqual(errors, []);
 });
 
@@ -50,12 +51,12 @@ test("init-config writes a validated local config template", async () => {
       "--agent-command",
       "node",
       "--output",
-      outputConfig
+      outputConfig,
     ],
     {
       stdout: (line) => output.push(line),
-      stderr: (line) => errors.push(line)
-    }
+      stderr: (line) => errors.push(line),
+    },
   );
   const result = JSON.parse(output[0] ?? "{}");
   const generated = JSON.parse(readFileSync(outputConfig, "utf8"));
@@ -77,10 +78,21 @@ test("init-config refuses to overwrite without force", async () => {
   const errors: string[] = [];
   writeFileSync(outputConfig, "{}", "utf8");
 
-  const exitCode = await runCli(["init-config", "--repo", "octo/repo", "--repo-path", "/tmp/repo", "--output", outputConfig], {
-    stdout: (line) => output.push(line),
-    stderr: (line) => errors.push(line)
-  });
+  const exitCode = await runCli(
+    [
+      "init-config",
+      "--repo",
+      "octo/repo",
+      "--repo-path",
+      "/tmp/repo",
+      "--output",
+      outputConfig,
+    ],
+    {
+      stdout: (line) => output.push(line),
+      stderr: (line) => errors.push(line),
+    },
+  );
 
   assert.equal(exitCode, 1);
   assert.deepEqual(output, []);
@@ -96,13 +108,23 @@ test("doctor reports live setup checks without exposing secrets", async () => {
   const errors: string[] = [];
   const restoreEnv = setLiveEnv();
   mkdirSync(policyDir, { recursive: true });
-  writeFileSync(join(policyDir, "agent-orchestrator.json"), JSON.stringify(repoPolicy()), "utf8");
-  writeFileSync(config, JSON.stringify(localConfig({ repoPath: repoDir, agentCommand: "node", github: true })), "utf8");
+  writeFileSync(
+    join(policyDir, "agent-orchestrator.json"),
+    JSON.stringify(repoPolicy()),
+    "utf8",
+  );
+  writeFileSync(
+    config,
+    JSON.stringify(
+      localConfig({ repoPath: repoDir, agentCommand: "node", github: true }),
+    ),
+    "utf8",
+  );
 
   try {
     const exitCode = await runCli(["doctor", "--config", config], {
       stdout: (line) => output.push(line),
-      stderr: (line) => errors.push(line)
+      stderr: (line) => errors.push(line),
     });
     const result = JSON.parse(output[0] ?? "{}");
 
@@ -110,9 +132,17 @@ test("doctor reports live setup checks without exposing secrets", async () => {
     assert.equal(result.command, "doctor");
     assert.equal(result.ok, true);
     assert.ok(result.checks.length >= 7);
-    assert.equal(result.checks.every((check: { status: string }) => check.status === "pass"), true);
+    assert.equal(
+      result.checks.every(
+        (check: { status: string }) => check.status === "pass",
+      ),
+      true,
+    );
     assert.deepEqual(errors, []);
-    assert.doesNotMatch(JSON.stringify(result), /webhook-secret|installation-secret|PRIVATE KEY/);
+    assert.doesNotMatch(
+      JSON.stringify(result),
+      /webhook-secret|installation-secret|PRIVATE KEY/,
+    );
   } finally {
     restoreEnv();
   }
@@ -124,7 +154,7 @@ test("missing config error points to init-config", async () => {
 
   const exitCode = await runCli(["doctor"], {
     stdout: (line) => output.push(line),
-    stderr: (line) => errors.push(line)
+    stderr: (line) => errors.push(line),
   });
   const result = JSON.parse(output[0] ?? "{}");
 
@@ -145,15 +175,26 @@ test("validate CLI accepts config, policy, and schema directory fixtures", async
   writeFileSync(policy, JSON.stringify(repoPolicy()), "utf8");
 
   const exitCode = await runCli(
-    ["validate", "--config", config, "--policy", policy, "--schema-dir", "docs/contracts/schemas"],
+    [
+      "validate",
+      "--config",
+      config,
+      "--policy",
+      policy,
+      "--schema-dir",
+      "docs/contracts/schemas",
+    ],
     {
       stdout: (line) => output.push(line),
-      stderr: (line) => errors.push(line)
-    }
+      stderr: (line) => errors.push(line),
+    },
   );
 
   assert.equal(exitCode, 0);
-  assert.deepEqual(JSON.parse(output[0] ?? "{}"), { ok: true, command: "validate" });
+  assert.deepEqual(JSON.parse(output[0] ?? "{}"), {
+    ok: true,
+    command: "validate",
+  });
   assert.deepEqual(errors, []);
 });
 
@@ -168,22 +209,22 @@ test("validate CLI rejects invalid config with registered error code and redacte
     JSON.stringify({
       ...localConfig(),
       database: {
-        path: "token=supersecretvalue123"
+        path: "token=supersecretvalue123",
       },
       agents: {
         ...localConfig().agents,
         planner: {
           ...localConfig().agents.planner,
-          command: ""
-        }
-      }
+          command: "",
+        },
+      },
     }),
-    "utf8"
+    "utf8",
   );
 
   const exitCode = await runCli(["validate", "--config", config], {
     stdout: (line) => output.push(line),
-    stderr: (line) => errors.push(line)
+    stderr: (line) => errors.push(line),
   });
 
   assert.equal(exitCode, 1);
@@ -203,7 +244,7 @@ test("serve CLI validates config and migrates state database in once mode", asyn
 
   const exitCode = await runCli(["serve", "--config", config, "--once"], {
     stdout: (line) => output.push(line),
-    stderr: (line) => errors.push(line)
+    stderr: (line) => errors.push(line),
   });
 
   assert.equal(exitCode, 0);
@@ -211,7 +252,7 @@ test("serve CLI validates config and migrates state database in once mode", asyn
     ok: true,
     command: "serve",
     mode: "check",
-    database: databasePath
+    database: databasePath,
   });
   assert.deepEqual(errors, []);
 });
@@ -225,10 +266,13 @@ test("serve CLI live mode fails fast without GitHub App config", async () => {
 
   writeFileSync(config, JSON.stringify(localConfig({ databasePath })), "utf8");
 
-  const exitCode = await runCli(["serve", "--config", config, "--once", "--github-mode", "live"], {
-    stdout: (line) => output.push(line),
-    stderr: (line) => errors.push(line)
-  });
+  const exitCode = await runCli(
+    ["serve", "--config", config, "--once", "--github-mode", "live"],
+    {
+      stdout: (line) => output.push(line),
+      stderr: (line) => errors.push(line),
+    },
+  );
 
   assert.equal(exitCode, 1);
   assert.deepEqual(output, []);
@@ -245,13 +289,23 @@ test("live-check validates live prerequisites without exposing secrets", async (
   const errors: string[] = [];
   const restoreEnv = setLiveEnv();
   mkdirSync(policyDir, { recursive: true });
-  writeFileSync(join(policyDir, "agent-orchestrator.json"), JSON.stringify(repoPolicy()), "utf8");
-  writeFileSync(config, JSON.stringify(localConfig({ repoPath: repoDir, agentCommand: "node", github: true })), "utf8");
+  writeFileSync(
+    join(policyDir, "agent-orchestrator.json"),
+    JSON.stringify(repoPolicy()),
+    "utf8",
+  );
+  writeFileSync(
+    config,
+    JSON.stringify(
+      localConfig({ repoPath: repoDir, agentCommand: "node", github: true }),
+    ),
+    "utf8",
+  );
 
   try {
     const exitCode = await runCli(["live-check", "--config", config], {
       stdout: (line) => output.push(line),
-      stderr: (line) => errors.push(line)
+      stderr: (line) => errors.push(line),
     });
     const result = JSON.parse(output[0] ?? "{}");
 
@@ -261,7 +315,10 @@ test("live-check validates live prerequisites without exposing secrets", async (
     assert.equal(result.repositories[0].repo, "octo/repo");
     assert.equal(result.agents.length, 4);
     assert.deepEqual(errors, []);
-    assert.doesNotMatch(JSON.stringify(result), /supersecret|private-key|installation-secret/);
+    assert.doesNotMatch(
+      JSON.stringify(result),
+      /supersecret|private-key|installation-secret/,
+    );
   } finally {
     restoreEnv();
   }
@@ -276,13 +333,27 @@ test("live-check fails when agent command is missing", async () => {
   const errors: string[] = [];
   const restoreEnv = setLiveEnv();
   mkdirSync(policyDir, { recursive: true });
-  writeFileSync(join(policyDir, "agent-orchestrator.json"), JSON.stringify(repoPolicy()), "utf8");
-  writeFileSync(config, JSON.stringify(localConfig({ repoPath: repoDir, agentCommand: "agent-orchestrator-missing-command", github: true })), "utf8");
+  writeFileSync(
+    join(policyDir, "agent-orchestrator.json"),
+    JSON.stringify(repoPolicy()),
+    "utf8",
+  );
+  writeFileSync(
+    config,
+    JSON.stringify(
+      localConfig({
+        repoPath: repoDir,
+        agentCommand: "agent-orchestrator-missing-command",
+        github: true,
+      }),
+    ),
+    "utf8",
+  );
 
   try {
     const exitCode = await runCli(["live-check", "--config", config], {
       stdout: (line) => output.push(line),
-      stderr: (line) => errors.push(line)
+      stderr: (line) => errors.push(line),
     });
 
     assert.equal(exitCode, 1);
@@ -302,13 +373,23 @@ test("live-check fails when webhook secret is missing", async () => {
   const errors: string[] = [];
   const restoreEnv = setLiveEnv({ webhookSecret: undefined });
   mkdirSync(policyDir, { recursive: true });
-  writeFileSync(join(policyDir, "agent-orchestrator.json"), JSON.stringify(repoPolicy()), "utf8");
-  writeFileSync(config, JSON.stringify(localConfig({ repoPath: repoDir, agentCommand: "node", github: true })), "utf8");
+  writeFileSync(
+    join(policyDir, "agent-orchestrator.json"),
+    JSON.stringify(repoPolicy()),
+    "utf8",
+  );
+  writeFileSync(
+    config,
+    JSON.stringify(
+      localConfig({ repoPath: repoDir, agentCommand: "node", github: true }),
+    ),
+    "utf8",
+  );
 
   try {
     const exitCode = await runCli(["live-check", "--config", config], {
       stdout: (line) => output.push(line),
-      stderr: (line) => errors.push(line)
+      stderr: (line) => errors.push(line),
     });
 
     assert.equal(exitCode, 1);
@@ -331,7 +412,7 @@ test("live-smoke sends signed autopilot webhook to a running service", async (co
       port: 0,
       database,
       databasePath: ":memory:",
-      webhookSecret: "secret"
+      webhookSecret: "secret",
     });
   } catch (error) {
     database.close();
@@ -356,12 +437,12 @@ test("live-smoke sends signed autopilot webhook to a running service", async (co
         "--issue",
         "123",
         "--title",
-        "Low-risk docs update"
+        "Low-risk docs update",
       ],
       {
         stdout: (line) => output.push(line),
-        stderr: (line) => errors.push(line)
-      }
+        stderr: (line) => errors.push(line),
+      },
     );
     const result = JSON.parse(output[0] ?? "{}");
 
@@ -371,7 +452,9 @@ test("live-smoke sends signed autopilot webhook to a running service", async (co
     assert.equal(result.response.advancement.runId, "run_octo_repo_issue_123");
     assert.deepEqual(errors, []);
 
-    const snapshot = getWorkflowRunSnapshot(database, { runId: "run_octo_repo_issue_123" });
+    const snapshot = getWorkflowRunSnapshot(database, {
+      runId: "run_octo_repo_issue_123",
+    });
     assert.equal(snapshot?.run.state, "planning");
   } finally {
     await runtime.close();
@@ -385,10 +468,21 @@ test("live-smoke fails before sending when webhook secret is missing", async () 
   const output: string[] = [];
   const errors: string[] = [];
   try {
-    const exitCode = await runCli(["live-smoke", "--url", "http://127.0.0.1:1", "--repo", "octo/repo", "--issue", "123"], {
-      stdout: (line) => output.push(line),
-      stderr: (line) => errors.push(line)
-    });
+    const exitCode = await runCli(
+      [
+        "live-smoke",
+        "--url",
+        "http://127.0.0.1:1",
+        "--repo",
+        "octo/repo",
+        "--issue",
+        "123",
+      ],
+      {
+        stdout: (line) => output.push(line),
+        stderr: (line) => errors.push(line),
+      },
+    );
 
     assert.equal(exitCode, 1);
     assert.deepEqual(output, []);
@@ -407,7 +501,7 @@ test("serve runtime exposes healthz and explicit webhook configuration response"
       host: "127.0.0.1",
       port: 0,
       database,
-      databasePath: ":memory:"
+      databasePath: ":memory:",
     });
   } catch (error) {
     database.close();
@@ -419,11 +513,19 @@ test("serve runtime exposes healthz and explicit webhook configuration response"
   }
 
   try {
-    const health = await fetch(`http://${runtime.host}:${runtime.port}/healthz`);
-    const webhook = await fetch(`http://${runtime.host}:${runtime.port}/webhook`, { method: "POST" });
+    const health = await fetch(
+      `http://${runtime.host}:${runtime.port}/healthz`,
+    );
+    const webhook = await fetch(
+      `http://${runtime.host}:${runtime.port}/webhook`,
+      { method: "POST" },
+    );
 
     assert.equal(health.status, 200);
-    assert.deepEqual(await health.json(), { ok: true, service: "agent-orchestrator" });
+    assert.deepEqual(await health.json(), {
+      ok: true,
+      service: "agent-orchestrator",
+    });
     assert.equal(webhook.status, 503);
     assert.equal((await webhook.json()).error, "WEBHOOK_SECRET_MISSING");
   } finally {
@@ -441,7 +543,7 @@ test("serve runtime accepts signed GitHub webhook intake when TCP bind is availa
       port: 0,
       database,
       databasePath: ":memory:",
-      webhookSecret: "secret"
+      webhookSecret: "secret",
     });
   } catch (error) {
     database.close();
@@ -458,17 +560,20 @@ test("serve runtime accepts signed GitHub webhook intake when TCP bind is availa
       label: { name: "agent:autopilot" },
       repository: { name: "repo", owner: { login: "octo" } },
       issue: { number: 123 },
-      sender: { login: "alice" }
+      sender: { login: "alice" },
     });
-    const response = await fetch(`http://${runtime.host}:${runtime.port}/webhook`, {
-      method: "POST",
-      headers: {
-        "x-github-event": "issues",
-        "x-github-delivery": "delivery-1",
-        "x-hub-signature-256": createSignature(payload, "secret")
+    const response = await fetch(
+      `http://${runtime.host}:${runtime.port}/webhook`,
+      {
+        method: "POST",
+        headers: {
+          "x-github-event": "issues",
+          "x-github-delivery": "delivery-1",
+          "x-hub-signature-256": createSignature(payload, "secret"),
+        },
+        body: payload,
       },
-      body: payload
-    });
+    );
     const body = await response.json();
 
     assert.equal(response.status, 202);
@@ -477,7 +582,9 @@ test("serve runtime accepts signed GitHub webhook intake when TCP bind is availa
     assert.equal(body.advancement.advanced, true);
     assert.equal(body.advancement.runId, "run_octo_repo_issue_123");
 
-    const snapshot = getWorkflowRunSnapshot(database, { runId: "run_octo_repo_issue_123" });
+    const snapshot = getWorkflowRunSnapshot(database, {
+      runId: "run_octo_repo_issue_123",
+    });
     assert.equal(snapshot?.run.state, "planning");
     assert.equal(snapshot?.transitions.length, 1);
     assert.equal(snapshot?.actions.length, 1);
@@ -493,7 +600,7 @@ test("serve runtime can run full lifecycle when lifecycle adapters are configure
   github.checkSummaries.set("octo/repo#1@fake-1", {
     responseRef: "checks:1:fake-1",
     headSha: "fake-1",
-    checks: [{ name: "npm run check", conclusion: "success" }]
+    checks: [{ name: "npm run check", conclusion: "success" }],
   });
   let runtime;
   try {
@@ -511,10 +618,10 @@ test("serve runtime can run full lifecycle when lifecycle adapters are configure
             repo: { owner: "octo", name: "repo", default_branch: "main" },
             localPath: "/tmp/repo",
             policyPath: "/tmp/repo/.github/agent-orchestrator.json",
-            policy: repoPolicy()
-          }
-        ]
-      }
+            policy: repoPolicy(),
+          },
+        ],
+      },
     });
   } catch (error) {
     database.close();
@@ -535,19 +642,22 @@ test("serve runtime can run full lifecycle when lifecycle adapters are configure
         title: "Low-risk docs update",
         body: "Update docs.",
         user: { login: "alice" },
-        labels: [{ name: "agent:autopilot" }]
+        labels: [{ name: "agent:autopilot" }],
       },
-      sender: { login: "alice" }
+      sender: { login: "alice" },
     });
-    const response = await fetch(`http://${runtime.host}:${runtime.port}/webhook`, {
-      method: "POST",
-      headers: {
-        "x-github-event": "issues",
-        "x-github-delivery": "delivery-lifecycle-1",
-        "x-hub-signature-256": createSignature(payload, "secret")
+    const response = await fetch(
+      `http://${runtime.host}:${runtime.port}/webhook`,
+      {
+        method: "POST",
+        headers: {
+          "x-github-event": "issues",
+          "x-github-delivery": "delivery-lifecycle-1",
+          "x-hub-signature-256": createSignature(payload, "secret"),
+        },
+        body: payload,
       },
-      body: payload
-    });
+    );
     const body = await response.json();
 
     assert.equal(response.status, 202);
@@ -555,7 +665,9 @@ test("serve runtime can run full lifecycle when lifecycle adapters are configure
     assert.equal(body.advancement.runId, "run_octo_repo_issue_123");
     assert.equal(body.advancement.mergeSha, "merge-1");
 
-    const snapshot = getWorkflowRunSnapshot(database, { runId: "run_octo_repo_issue_123" });
+    const snapshot = getWorkflowRunSnapshot(database, {
+      runId: "run_octo_repo_issue_123",
+    });
     assert.equal(snapshot?.run.state, WorkflowState.IssueClosed);
     assert.equal(snapshot?.run.pr_number, 1);
     assert.equal(github.closedIssues.length, 1);
@@ -573,24 +685,38 @@ test("reconcile CLI reports dry-run candidates from input snapshot", async () =>
   writeFileSync(
     input,
     JSON.stringify({
-      issues: [{ repo: { owner: "octo", name: "repo" }, issue: 1, state: "open", labels: ["agent:autopilot"] }],
-      pullRequests: [{ repo: { owner: "octo", name: "repo" }, pr: 2, state: "open", branch: "agent/issue-1-x" }],
+      issues: [
+        {
+          repo: { owner: "octo", name: "repo" },
+          issue: 1,
+          state: "open",
+          labels: ["agent:autopilot"],
+        },
+      ],
+      pullRequests: [
+        {
+          repo: { owner: "octo", name: "repo" },
+          pr: 2,
+          state: "open",
+          branch: "agent/issue-1-x",
+        },
+      ],
       runs: [
         {
           runId: "run_expired",
           state: "planning",
           leaseOwner: "worker",
-          leaseExpiresAt: "2026-06-24T00:00:00.000Z"
-        }
+          leaseExpiresAt: "2026-06-24T00:00:00.000Z",
+        },
       ],
-      now: "2026-06-24T00:01:00.000Z"
+      now: "2026-06-24T00:01:00.000Z",
     }),
-    "utf8"
+    "utf8",
   );
 
   const exitCode = await runCli(["reconcile", "--dry-run", "--input", input], {
     stdout: (line) => output.push(line),
-    stderr: (line) => errors.push(line)
+    stderr: (line) => errors.push(line),
   });
   const result = JSON.parse(output[0] ?? "{}");
 
@@ -599,7 +725,7 @@ test("reconcile CLI reports dry-run candidates from input snapshot", async () =>
   assert.deepEqual(result.proposedTransitions, {
     candidateIssues: 1,
     candidatePullRequests: 1,
-    expiredLeases: 1
+    expiredLeases: 1,
   });
   assert.deepEqual(errors, []);
 });
@@ -623,7 +749,7 @@ test("inspect-run CLI prints run state, transitions, actions, and stale head evi
       state: "pr_reviewing",
       idempotencyKey: "run_cli:create",
       headSha: "head2",
-      now
+      now,
     });
     database
       .prepare(
@@ -637,18 +763,29 @@ test("inspect-run CLI prints run state, transitions, actions, and stale head evi
             reason,
             created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        `
+        `,
       )
-      .run("run_cli", "ci_waiting", "pr_reviewing", "pull_request.synchronized", "head1", "old head", now.toISOString());
+      .run(
+        "run_cli",
+        "ci_waiting",
+        "pr_reviewing",
+        "pull_request.synchronized",
+        "head1",
+        "old head",
+        now.toISOString(),
+      );
   } finally {
     database.close();
   }
   writeFileSync(config, JSON.stringify(localConfig({ databasePath })), "utf8");
 
-  const exitCode = await runCli(["inspect-run", "--config", config, "--run-id", "run_cli"], {
-    stdout: (line) => output.push(line),
-    stderr: (line) => errors.push(line)
-  });
+  const exitCode = await runCli(
+    ["inspect-run", "--config", config, "--run-id", "run_cli"],
+    {
+      stdout: (line) => output.push(line),
+      stderr: (line) => errors.push(line),
+    },
+  );
   const result = JSON.parse(output[0] ?? "{}");
 
   assert.equal(exitCode, 0);
@@ -664,31 +801,31 @@ function repoPolicy() {
     version: 1,
     autopilot: {
       enabled: true,
-      trigger_labels: ["agent:autopilot"]
+      trigger_labels: ["agent:autopilot"],
     },
     merge: {
       default_method: "squash",
       auto_merge: {
         enabled: true,
         allowed_risks: ["low"],
-        blocked_labels: ["agent:no-merge", "needs-human"]
-      }
+        blocked_labels: ["agent:no-merge", "needs-human"],
+      },
     },
     paths: {
       allow: ["src/**"],
       deny: [".github/**"],
-      high_risk: ["package-lock.json"]
+      high_risk: ["package-lock.json"],
     },
     checks: {
       required: ["npm run check"],
-      source: "policy_required_names"
+      source: "policy_required_names",
     },
     review: {
       max_fix_rounds: 2,
       require_plan_review: true,
       require_pr_review: true,
-      agent_review_counts_as_human_review: false
-    }
+      agent_review_counts_as_human_review: false,
+    },
   };
 }
 
@@ -706,8 +843,8 @@ function lifecycleAgents() {
         implementation_steps: ["Edit docs/example.md"],
         test_plan: ["npm run check"],
         expected_files: ["docs/example.md"],
-        created_at: "2026-06-24T08:00:00.000Z"
-      }
+        created_at: "2026-06-24T08:00:00.000Z",
+      },
     }),
     planReviewer: new FakeAgentAdapter({
       role: AgentRole.PlanReviewer,
@@ -721,8 +858,8 @@ function lifecycleAgents() {
         summary: "Plan is low risk and scoped.",
         blocking_findings: [],
         required_tests: ["npm run check"],
-        created_at: "2026-06-24T08:00:00.000Z"
-      }
+        created_at: "2026-06-24T08:00:00.000Z",
+      },
     }),
     implementer: new FakeAgentAdapter({
       role: AgentRole.Implementer,
@@ -740,10 +877,10 @@ function lifecycleAgents() {
         pr_body_fields: {
           summary: "Updated docs.",
           tests: ["npm run check"],
-          risk: "low"
+          risk: "low",
         },
-        created_at: "2026-06-24T08:00:00.000Z"
-      }
+        created_at: "2026-06-24T08:00:00.000Z",
+      },
     }),
     prReviewer: new FakeAgentAdapter({
       role: AgentRole.PrReviewer,
@@ -759,9 +896,9 @@ function lifecycleAgents() {
         summary: "PR is ready.",
         blocking_findings: [],
         required_tests: ["npm run check"],
-        created_at: "2026-06-24T08:00:00.000Z"
-      }
-    })
+        created_at: "2026-06-24T08:00:00.000Z",
+      },
+    }),
   };
 }
 
@@ -770,7 +907,7 @@ function setLiveEnv(options?: { readonly webhookSecret?: string }): () => void {
     appId: process.env.AGENT_ORCHESTRATOR_GITHUB_APP_ID,
     privateKey: process.env.AGENT_ORCHESTRATOR_GITHUB_PRIVATE_KEY,
     installationId: process.env.AGENT_ORCHESTRATOR_GITHUB_INSTALLATION_ID,
-    webhookSecret: process.env.AGENT_ORCHESTRATOR_WEBHOOK_SECRET
+    webhookSecret: process.env.AGENT_ORCHESTRATOR_WEBHOOK_SECRET,
   };
   process.env.AGENT_ORCHESTRATOR_GITHUB_APP_ID = "12345";
   process.env.AGENT_ORCHESTRATOR_GITHUB_PRIVATE_KEY = generatePrivateKey();
@@ -786,7 +923,10 @@ function setLiveEnv(options?: { readonly webhookSecret?: string }): () => void {
   return () => {
     restoreEnv("AGENT_ORCHESTRATOR_GITHUB_APP_ID", previous.appId);
     restoreEnv("AGENT_ORCHESTRATOR_GITHUB_PRIVATE_KEY", previous.privateKey);
-    restoreEnv("AGENT_ORCHESTRATOR_GITHUB_INSTALLATION_ID", previous.installationId);
+    restoreEnv(
+      "AGENT_ORCHESTRATOR_GITHUB_INSTALLATION_ID",
+      previous.installationId,
+    );
     restoreEnv("AGENT_ORCHESTRATOR_WEBHOOK_SECRET", previous.webhookSecret);
   };
 }
@@ -795,7 +935,7 @@ function generatePrivateKey(): string {
   const { privateKey } = generateKeyPairSync("rsa", {
     modulusLength: 2048,
     privateKeyEncoding: { type: "pkcs8", format: "pem" },
-    publicKeyEncoding: { type: "spki", format: "pem" }
+    publicKeyEncoding: { type: "spki", format: "pem" },
   });
   return privateKey;
 }
@@ -808,13 +948,18 @@ function restoreEnv(name: string, value: string | undefined): void {
   }
 }
 
-function localConfig(options?: { readonly databasePath?: string; readonly repoPath?: string; readonly agentCommand?: string; readonly github?: boolean }) {
+function localConfig(options?: {
+  readonly databasePath?: string;
+  readonly repoPath?: string;
+  readonly agentCommand?: string;
+  readonly github?: boolean;
+}) {
   const agent = {
     adapter: "codex",
     command: options?.agentCommand ?? "codex",
     args: ["run"],
     mode: "write_worktree",
-    network: "deny"
+    network: "deny",
   };
 
   return {
@@ -826,15 +971,15 @@ function localConfig(options?: { readonly databasePath?: string; readonly repoPa
             mode: "app",
             app_id_env: "AGENT_ORCHESTRATOR_GITHUB_APP_ID",
             private_key_env: "AGENT_ORCHESTRATOR_GITHUB_PRIVATE_KEY",
-            installation_id_env: "AGENT_ORCHESTRATOR_GITHUB_INSTALLATION_ID"
-          }
+            installation_id_env: "AGENT_ORCHESTRATOR_GITHUB_INSTALLATION_ID",
+          },
         }
       : undefined,
     database: {
-      path: options?.databasePath ?? ".agent-orchestrator/state.sqlite"
+      path: options?.databasePath ?? ".agent-orchestrator/state.sqlite",
     },
     workspaces: {
-      root: ".agent-orchestrator/workspaces"
+      root: ".agent-orchestrator/workspaces",
     },
     repositories: [
       {
@@ -842,8 +987,8 @@ function localConfig(options?: { readonly databasePath?: string; readonly repoPa
         name: "repo",
         local_path: options?.repoPath ?? "/tmp/repo",
         default_branch: "main",
-        policy_file: ".github/agent-orchestrator.json"
-      }
+        policy_file: ".github/agent-orchestrator.json",
+      },
     ],
     agents: {
       planner: agent,
@@ -852,8 +997,8 @@ function localConfig(options?: { readonly databasePath?: string; readonly repoPa
       pr_reviewer: agent,
       merge_agent: {
         adapter: "builtin",
-        mode: "deterministic"
-      }
-    }
+        mode: "deterministic",
+      },
+    },
   };
 }

@@ -426,3 +426,43 @@ Impacted contracts: C-CLI-001, C-SEC-001, C-API-001, C-API-002, C-DATA-001, C-ST
 Rollback or compatibility plan: If live smoke fails, leave the run in a recoverable blocked/failed state and record the failure in blockers instead of marking M6 done.
 Status: Done
 Updated at: 2026-06-25
+
+## M7 - Local Web UI
+
+### T-M7-001 - Local UI contract and read queries
+
+Milestone: M7 - Local Web UI
+Module: Docs/api-design, State store reads
+Design basis: Operator need for a localhost SQLite dashboard; confirmed defaults port `23847`, deliveries page in v1, mixed EN state + ZH labels, 10s auto-refresh.
+Change scope: Contract `08-local-ui-api.md`, CLI docs, error codes, SQLite list/stats/delivery read queries.
+Out of scope: GitHub API enrichment, control writes, frontend pages.
+Inputs: `docs/contracts/data-contracts.md`, `ao inspect-run` snapshot shape.
+Outputs: `docs/api-design/08-local-ui-api.md`, `src/state/sqlite-queries.ts`, tests.
+Permission actions: None.
+Error codes: `LOCAL_RUN_NOT_FOUND`, `LOCAL_QUERY_INVALID`, `LOCAL_DB_UNAVAILABLE`.
+Audit requirements: Responses remain redacted.
+Verification requirements: `npm run check`.
+Acceptance criteria: Contract documents port `23847`, deliveries API, UI language rules, and 10s refresh; read queries return list, stats, and delivery rows from in-memory SQLite fixtures.
+Impacted contracts: C-CLI-001, C-DATA-001.
+Rollback or compatibility plan: Docs-only contract can be reverted independently from runtime code.
+Status: Done
+Updated at: 2026-06-25
+
+### T-M7-002 - `ao ui` server and static pages
+
+Milestone: M7 - Local Web UI
+Module: CLI, UI server, static assets
+Design basis: `docs/api-design/08-local-ui-api.md`.
+Change scope: `ao ui` command, `/api/local/v1/*`, `/ui/*` pages for dashboard, runs, run detail, deliveries.
+Out of scope: GitHub enrichment, control commands.
+Inputs: SQLite read queries, stale-head evidence helper.
+Outputs: `src/ui/`, CLI help, UI/API tests, acceptance log entry.
+Permission actions: None.
+Error codes: Local UI error codes from contract.
+Audit requirements: No secrets in HTTP responses.
+Verification requirements: `npm run check`; `ao ui --config config/local.example.json --once`.
+Acceptance criteria: Local UI serves dashboard, run list, run detail, and deliveries; auto-refresh defaults to 10 seconds; concurrent read works while `ao serve` is writing the same database file.
+Impacted contracts: C-CLI-001.
+Rollback or compatibility plan: `ao ui` is additive; remove command and `src/ui/` if direction changes.
+Status: Done
+Updated at: 2026-06-25

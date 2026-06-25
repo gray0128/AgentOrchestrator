@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Deliveries · Agent Orchestrator</title>
+    <link rel="stylesheet" href="/ui/styles.css" />
+  </head>
+  <body data-page="deliveries">
+    <header>
+      <h1>Webhook Deliveries</h1>
+      <nav>
+        <a href="/ui/">总览</a>
+        <a href="/ui/runs">Runs</a>
+        <a href="/ui/deliveries">Deliveries</a>
+      </nav>
+    </header>
+    <main>
+      <div class="toolbar">
+        <label>
+          状态筛选
+          <select id="delivery-status">
+            <option value="">全部状态</option>
+            <option value="received">received</option>
+            <option value="ignored">ignored</option>
+            <option value="processed">processed</option>
+            <option value="failed">failed</option>
+          </select>
+        </label>
+        <label><input id="auto-refresh" type="checkbox" checked /> 每 10 秒自动刷新</label>
+        <button id="refresh-now" type="button">立即刷新</button>
+        <span id="status-line" class="status-line"></span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Delivery ID</th>
+            <th>Event</th>
+            <th>Action</th>
+            <th>仓库</th>
+            <th>Status</th>
+            <th>错误码</th>
+            <th>接收时间</th>
+          </tr>
+        </thead>
+        <tbody id="deliveries-table"></tbody>
+      </table>
+    </main>
+    <script src="/ui/app.js"></script>
+  </body>
+</html>

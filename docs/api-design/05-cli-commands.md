@@ -154,6 +154,32 @@ Rules:
 - Must redact secrets.
 - Must identify stale head sha evidence.
 
+### `ao ui`
+
+Starts the local read-only Web UI and JSON query API over SQLite.
+
+Flags:
+
+- `--config <path>`: local config path.
+- `--db <path>`: SQLite path override.
+- `--host <host>`: defaults to `127.0.0.1`.
+- `--port <port>`: defaults to `23847`.
+- `--once`: start, verify `GET /healthz`, then exit without blocking.
+
+Verification:
+
+- Opens SQLite in query-only mode and does not run migrations.
+- `GET /healthz` returns `agent-orchestrator-ui`.
+- `GET /api/local/v1/stats`, `/runs`, `/deliveries`, and run detail routes return redacted JSON.
+- Serves static UI at `/ui/`, `/ui/runs`, `/ui/deliveries`, and `/ui/runs/:runId`.
+- Default UI auto-refresh interval is 10 seconds.
+- Can run concurrently with `ao serve` against the same SQLite file.
+- Rejects bind host `0.0.0.0`.
+
+Output:
+
+- On start, prints the local UI URL, for example `http://127.0.0.1:23847/ui/`.
+
 ## Exit Codes
 
 | Code | Meaning |

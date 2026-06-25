@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Run 详情 · Agent Orchestrator</title>
+    <link rel="stylesheet" href="/ui/styles.css" />
+  </head>
+  <body data-page="run-detail">
+    <header>
+      <h1 id="run-title">Run 详情</h1>
+      <nav>
+        <a href="/ui/">总览</a>
+        <a href="/ui/runs">Runs</a>
+        <a href="/ui/deliveries">Deliveries</a>
+      </nav>
+    </header>
+    <main>
+      <div class="toolbar">
+        <label><input id="auto-refresh" type="checkbox" checked /> 每 10 秒自动刷新</label>
+        <button id="refresh-now" type="button">立即刷新</button>
+        <span id="status-line" class="status-line"></span>
+      </div>
+
+      <div id="stale-alert" class="alert" hidden></div>
+
+      <section class="card">
+        <div id="run-subtitle"></div>
+        <div id="run-links" style="margin-top: 0.5rem"></div>
+        <div id="run-meta" class="status-line" style="margin-top: 0.75rem"></div>
+      </section>
+
+      <section class="section card">
+        <h3>状态时间线</h3>
+        <ul id="timeline" class="timeline"></ul>
+      </section>
+
+      <section class="section">
+        <h3>幂等动作</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Target</th>
+              <th>Target ID</th>
+              <th>Status</th>
+              <th>Response Ref</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody id="actions-table"></tbody>
+        </table>
+      </section>
+    </main>
+    <script src="/ui/app.js"></script>
+  </body>
+</html>

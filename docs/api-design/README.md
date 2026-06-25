@@ -5,7 +5,7 @@ This directory defines the API and interface contracts that must be stable befor
 - External inbound surface: GitHub webhooks received by Orchestrator Server.
 - Internal deterministic surface: normalized domain events, GitHub API Adapter methods, Agent Adapter methods, Policy Engine, State Store, Workspace Manager, and Process Manager.
 
-The MVP does not expose a public user-facing HTTP API beyond GitHub webhooks.
+The MVP exposes one additional local operator surface: `ao ui`, a read-only localhost Web UI backed by SQLite. GitHub webhooks remain the only external inbound HTTP surface.
 
 ## Design Principles
 
@@ -25,3 +25,4 @@ The MVP does not expose a public user-facing HTTP API beyond GitHub webhooks.
 5. `05-cli-commands.md`: planned local CLI and developer commands.
 6. `06-error-codes-and-permission-actions.md`: error, permission, audit registries.
 7. `07-openapi-generation.md`: schema generation and validation policy.
+8. `08-local-ui-api.md`: localhost read-only UI pages and `/api/local/v1` JSON routes.

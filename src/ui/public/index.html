@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Orchestrator 本地面板</title>
+    <link rel="stylesheet" href="/ui/styles.css" />
+  </head>
+  <body data-page="dashboard">
+    <header>
+      <h1>Agent Orchestrator 本地面板</h1>
+      <nav>
+        <a href="/ui/">总览</a>
+        <a href="/ui/runs">Runs</a>
+        <a href="/ui/deliveries">Deliveries</a>
+      </nav>
+    </header>
+    <main>
+      <div class="toolbar">
+        <label><input id="auto-refresh" type="checkbox" checked /> 每 10 秒自动刷新</label>
+        <button id="refresh-now" type="button">立即刷新</button>
+        <span id="status-line" class="status-line"></span>
+      </div>
+
+      <section class="grid">
+        <article class="card">
+          <h2>Workflow Runs</h2>
+          <div id="metric-runs" class="metric">—</div>
+        </article>
+        <article class="card">
+          <h2>活跃 Lease</h2>
+          <div id="metric-active-leases" class="metric">—</div>
+        </article>
+        <article class="card">
+          <h2>Blocked / Failed</h2>
+          <div id="metric-blocked" class="metric">—</div>
+        </article>
+        <article class="card">
+          <h2>24h Deliveries</h2>
+          <div id="metric-deliveries" class="metric">—</div>
+        </article>
+        <article class="card">
+          <h2>24h 失败投递</h2>
+          <div id="metric-failed-deliveries" class="metric">—</div>
+        </article>
+      </section>
+
+      <section class="section grid">
+        <article class="card">
+          <h3>按状态分布</h3>
+          <ul id="state-breakdown"></ul>
+        </article>
+        <article class="card" style="grid-column: span 2">
+          <h3>最近更新的 Runs</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>仓库 / Issue</th>
+                <th>状态</th>
+                <th>Head SHA</th>
+                <th>更新时间</th>
+              </tr>
+            </thead>
+            <tbody id="recent-runs"></tbody>
+          </table>
+        </article>
+      </section>
+    </main>
+    <script src="/ui/app.js"></script>
+  </body>
+</html>

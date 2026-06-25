@@ -30,6 +30,9 @@
 | `IDEMPOTENCY_CONFLICT` | No | Yes | Same key was used with different request hash. |
 | `AGENT_PROCESS_FAILED` | Yes | No | Agent process exited unsuccessfully. |
 | `RETRY_EXHAUSTED` | No | Maybe | Retry budget exhausted. |
+| `LOCAL_RUN_NOT_FOUND` | No | No | Local UI or inspect query found no matching workflow run. |
+| `LOCAL_QUERY_INVALID` | No | No | Local UI query parameters are missing or malformed. |
+| `LOCAL_DB_UNAVAILABLE` | Yes | No | SQLite file is missing or unreadable for local UI reads. |
 
 ## Permission Actions
 
