@@ -63,11 +63,78 @@ Key fields:
 - `repositories[].default_branch`: target base branch.
 - `repositories[].policy_file`: repo policy file path inside the managed repo.
 - `agents`: role-to-adapter command configuration.
+- `agent_routing`: optional routing catalog and task profile priority rules.
 
 Example validation:
 
 ```sh
 ao doctor --config config/local.json
+```
+
+### Coding Agent Routing
+
+AgentOrchestrator runs coding agents through process adapters. The built-in adapter names are:
+
+- `codex`: Codex CLI compatible command.
+- `claude`: Claude Code compatible command.
+- `custom`: any command or wrapper that follows the AgentOrchestrator stdin/stdout contract.
+
+Every configured agent process receives JSON on stdin:
+
+```json
+{ "envelope": { "...": "task envelope" }, "prompt": "role prompt" }
+```
+
+It must print exactly one contract JSON object to stdout, for example `agent-orchestrator.plan-result.v1`, `agent-orchestrator.implementation-result.v1`, or `agent-orchestrator.reviewer-verdict.v1`.
+
+For local coding CLIs that do not natively speak that contract, use the included wrapper:
+
+```sh
+tools/coding-agent-adapter.mjs --provider codex_desktop
+tools/coding-agent-adapter.mjs --provider grok_build
+tools/coding-agent-adapter.mjs --provider reasonix
+tools/coding-agent-adapter.mjs --provider claude_code
+```
+
+Optional routing config lets different task profiles choose candidates by priority. `default_profile` applies when no label-specific profile matches.
+
+```json
+"agent_routing": {
+  "default_profile": "complex",
+  "catalog": {
+    "codex_desktop": {
+      "adapter": "codex",
+      "command": "/path/to/tools/coding-agent-adapter.mjs",
+      "args": ["--provider", "codex_desktop"],
+      "mode": "write_worktree",
+      "network": "restricted"
+    },
+    "grok_build": {
+      "adapter": "custom",
+      "command": "/path/to/tools/coding-agent-adapter.mjs",
+      "args": ["--provider", "grok_build"],
+      "mode": "write_worktree",
+      "network": "restricted"
+    }
+  },
+  "profiles": {
+    "complex": {
+      "labels_any": ["agent:complex", "risk:high", "risk:medium", "type:feature", "type:bug"],
+      "roles": {
+        "planner": ["codex_desktop", "grok_build"],
+        "implementer": ["codex_desktop", "grok_build"],
+        "plan_reviewer": ["codex_desktop", "grok_build"],
+        "pr_reviewer": ["codex_desktop", "grok_build"]
+      }
+    }
+  }
+}
+```
+
+The current local profile is configured as:
+
+```text
+codex_desktop > grok_build > reasonix > claude_code
 ```
 
 ### Repo Policy

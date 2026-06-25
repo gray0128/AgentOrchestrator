@@ -194,6 +194,52 @@ test("local config fixture validates and rejects malformed agents", () => {
   assert.ok(invalid.errors.some((error) => error.includes("agents.planner.command")));
 });
 
+test("local config supports routing catalog profiles and rejects unknown candidates", () => {
+  const config = {
+    ...localConfig(),
+    agent_routing: {
+      default_profile: "complex",
+      catalog: {
+        codex_desktop: {
+          adapter: "codex",
+          command: "/Applications/Codex.app/Contents/Resources/codex",
+          args: ["exec"],
+          mode: "write_worktree",
+          network: "restricted"
+        }
+      },
+      profiles: {
+        complex: {
+          labels_any: ["agent:complex"],
+          roles: {
+            planner: ["codex_desktop"],
+            implementer: ["codex_desktop"]
+          }
+        }
+      }
+    }
+  };
+
+  assert.deepEqual(validateLocalConfig(config), { ok: true, value: config });
+
+  const invalid = validateLocalConfig({
+    ...config,
+    agent_routing: {
+      ...config.agent_routing,
+      profiles: {
+        complex: {
+          roles: {
+            planner: ["missing_agent"]
+          }
+        }
+      }
+    }
+  });
+
+  assert.equal(invalid.ok, false);
+  assert.ok(invalid.errors.some((error) => error.includes("unknown agent missing_agent")));
+});
+
 function taskEnvelope(): TaskEnvelope {
   return {
     schema: "agent-orchestrator.task-envelope.v1",

@@ -97,6 +97,11 @@ Output:
 
 Rules:
 
+- `agent_routing.default_profile` selects a named profile when no label-specific profile matches.
+- `agent_routing.profiles.<name>.labels_any` can select a profile when an Issue has any listed label.
+- Role candidate arrays are priority ordered; the first configured and executable candidate is selected.
+- `agent_routing.catalog` entries use the same process adapter shape as role-level `agents`.
+- Local CLIs that do not natively emit AgentOrchestrator JSON should be called through `tools/coding-agent-adapter.mjs`.
 - Issue-level routing commands may narrow behavior but cannot expand permissions.
 - `merge_agent` is builtin deterministic code for MVP.
 

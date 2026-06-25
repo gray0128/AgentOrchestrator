@@ -81,6 +81,7 @@ export type LocalConfig = {
     readonly pr_reviewer: AgentConfig;
     readonly merge_agent: { readonly adapter: "builtin"; readonly mode: "deterministic" };
   };
+  readonly agent_routing?: AgentRoutingConfig;
 };
 
 type AgentConfig = {
@@ -89,6 +90,18 @@ type AgentConfig = {
   readonly args: readonly string[];
   readonly mode: "read_only" | "write_worktree";
   readonly network?: "deny" | "allow" | "restricted";
+};
+
+type AgentRoutingConfig = {
+  readonly default_profile?: string;
+  readonly catalog: Record<string, AgentConfig>;
+  readonly profiles: Record<
+    string,
+    {
+      readonly labels_any?: readonly string[];
+      readonly roles: Partial<Record<AgentRole, readonly string[]>>;
+    }
+  >;
 };
 
 export type ValidationResult<T> =
@@ -344,6 +357,9 @@ export function validateLocalConfig(value: unknown): ValidationResult<LocalConfi
   validateWorkspaceConfig(value.workspaces, errors);
   validateRepositoryConfigs(value.repositories, errors);
   validateAgentConfigs(value.agents, errors);
+  if (value.agent_routing !== undefined) {
+    validateAgentRoutingConfig(value.agent_routing, errors);
+  }
 
   return errors.length === 0 ? { ok: true, value: value as LocalConfig } : { ok: false, errors };
 }
@@ -530,6 +546,56 @@ function validateAgentConfig(value: unknown, label: string, errors: string[]): v
   requireEnum(value, "mode", ["read_only", "write_worktree"], errors, `${label}.mode`);
   if (value.network !== undefined) {
     requireEnum(value, "network", ["deny", "allow", "restricted"], errors, `${label}.network`);
+  }
+}
+
+function validateAgentRoutingConfig(value: unknown, errors: string[]): void {
+  if (!isRecord(value)) {
+    errors.push("agent_routing must be an object");
+    return;
+  }
+  if (value.default_profile !== undefined) {
+    requireNonEmptyString(value.default_profile, "agent_routing.default_profile", errors);
+  }
+  if (!isRecord(value.catalog)) {
+    errors.push("agent_routing.catalog must be an object");
+    return;
+  }
+  for (const [name, agent] of Object.entries(value.catalog)) {
+    validateAgentConfig(agent, `agent_routing.catalog.${name}`, errors);
+  }
+  if (!isRecord(value.profiles)) {
+    errors.push("agent_routing.profiles must be an object");
+    return;
+  }
+  for (const [profileName, profile] of Object.entries(value.profiles)) {
+    if (!isRecord(profile)) {
+      errors.push(`agent_routing.profiles.${profileName} must be an object`);
+      continue;
+    }
+    if (profile.labels_any !== undefined) {
+      requireStringArray(profile.labels_any, `agent_routing.profiles.${profileName}.labels_any`, errors);
+    }
+    if (!isRecord(profile.roles)) {
+      errors.push(`agent_routing.profiles.${profileName}.roles must be an object`);
+      continue;
+    }
+    for (const role of [AgentRole.Planner, AgentRole.PlanReviewer, AgentRole.Implementer, AgentRole.PrReviewer]) {
+      const candidates = profile.roles[role];
+      if (candidates !== undefined) {
+        requireStringArray(candidates, `agent_routing.profiles.${profileName}.roles.${role}`, errors, { minItems: 1 });
+        if (Array.isArray(candidates)) {
+          for (const candidate of candidates) {
+            if (typeof candidate === "string" && value.catalog[candidate] === undefined) {
+              errors.push(`agent_routing.profiles.${profileName}.roles.${role} references unknown agent ${candidate}`);
+            }
+          }
+        }
+      }
+    }
+  }
+  if (typeof value.default_profile === "string" && value.profiles[value.default_profile] === undefined) {
+    errors.push("agent_routing.default_profile must reference an existing profile");
   }
 }
 

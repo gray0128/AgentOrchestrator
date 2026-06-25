@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { AgentRole } from "./agents/adapter.ts";
 import { ProcessAgentAdapter } from "./agents/process-agent-adapter.ts";
+import { RoutingAgentAdapter, roleConfigKey } from "./agents/routing-agent-adapter.ts";
 import { validateLocalConfig, validateRepoPolicy } from "./contracts/validation.ts";
 import type { LocalConfig } from "./contracts/validation.ts";
 import { ErrorCode } from "./errors.ts";
@@ -632,31 +633,47 @@ function buildServeRuntimeDependencies(
 
 function buildProcessAgents(config: LocalConfig): RuntimeLifecycleAgents {
   return {
-    planner: new ProcessAgentAdapter({
-      role: AgentRole.Planner,
-      command: config.agents.planner.command,
-      args: config.agents.planner.args
-    }),
-    planReviewer: new ProcessAgentAdapter({
-      role: AgentRole.PlanReviewer,
-      command: config.agents.plan_reviewer.command,
-      args: config.agents.plan_reviewer.args
-    }),
-    implementer: new ProcessAgentAdapter({
-      role: AgentRole.Implementer,
-      command: config.agents.implementer.command,
-      args: config.agents.implementer.args
-    }),
-    prReviewer: new ProcessAgentAdapter({
-      role: AgentRole.PrReviewer,
-      command: config.agents.pr_reviewer.command,
-      args: config.agents.pr_reviewer.args
-    })
+    planner: buildRoleAgent(config, AgentRole.Planner),
+    planReviewer: buildRoleAgent(config, AgentRole.PlanReviewer),
+    implementer: buildRoleAgent(config, AgentRole.Implementer),
+    prReviewer: buildRoleAgent(config, AgentRole.PrReviewer)
   };
 }
 
+function buildRoleAgent<Role extends typeof AgentRole[keyof typeof AgentRole]>(config: LocalConfig, role: Role) {
+  const fallback = buildProcessAgent(role, config.agents[roleConfigKey(role)]);
+  if (!config.agent_routing) {
+    return fallback;
+  }
+  const profiles = Object.entries(config.agent_routing.profiles).map(([name, profile]) => {
+    const candidates = (profile.roles[role] ?? [])
+      .map((agentName) => config.agent_routing?.catalog[agentName])
+      .filter((agentConfig) => agentConfig && commandExists(agentConfig.command))
+      .map((agentConfig) => buildProcessAgent(role, agentConfig));
+    return {
+      name,
+      labelsAny: profile.labels_any,
+      candidates
+    };
+  });
+  return new RoutingAgentAdapter({
+    role,
+    fallback,
+    profiles,
+    defaultProfile: config.agent_routing.default_profile
+  });
+}
+
+function buildProcessAgent<Role extends typeof AgentRole[keyof typeof AgentRole]>(role: Role, config: LocalConfig["agents"][ReturnType<typeof roleConfigKey>]) {
+  return new ProcessAgentAdapter({
+    role,
+    command: config.command,
+    args: config.args
+  });
+}
+
 function checkAgentCommands(config: LocalConfig): readonly { readonly role: string; readonly command: string; readonly available: boolean }[] {
-  return [
+  const roleAgents = [
     { role: AgentRole.Planner, config: config.agents.planner },
     { role: AgentRole.PlanReviewer, config: config.agents.plan_reviewer },
     { role: AgentRole.Implementer, config: config.agents.implementer },
@@ -664,8 +681,41 @@ function checkAgentCommands(config: LocalConfig): readonly { readonly role: stri
   ].map((agent) => ({
     role: agent.role,
     command: agent.config.command,
-    available: commandExists(agent.config.command)
+    available: agentCommandAvailable(agent.config)
   }));
+  const routingAgents = config.agent_routing
+    ? Object.entries(config.agent_routing.catalog).map(([name, agent]) => ({
+        role: `routing:${name}`,
+        command: agent.command,
+        available: agentCommandAvailable(agent)
+      }))
+    : [];
+  return [...roleAgents, ...routingAgents];
+}
+
+function agentCommandAvailable(config: { readonly command: string; readonly args: readonly string[] }): boolean {
+  return commandExists(config.command) && codingProviderAvailable(config.args);
+}
+
+function codingProviderAvailable(args: readonly string[]): boolean {
+  const providerIndex = args.indexOf("--provider");
+  if (providerIndex < 0) {
+    return true;
+  }
+  const provider = args[providerIndex + 1];
+  if (provider === "codex_desktop") {
+    return commandExists(process.env.AGENT_ORCHESTRATOR_CODEX_CMD ?? "/Applications/Codex.app/Contents/Resources/codex");
+  }
+  if (provider === "grok_build") {
+    return commandExists(process.env.AGENT_ORCHESTRATOR_GROK_CMD ?? "/Users/libo/.grok/bin/grok");
+  }
+  if (provider === "reasonix") {
+    return commandExists(process.env.AGENT_ORCHESTRATOR_REASONIX_CMD ?? "/opt/homebrew/bin/reasonix");
+  }
+  if (provider === "claude_code") {
+    return commandExists(process.env.AGENT_ORCHESTRATOR_CLAUDE_CMD ?? "/opt/homebrew/bin/claude");
+  }
+  return false;
 }
 
 function commandExists(command: string): boolean {
