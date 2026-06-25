@@ -49,6 +49,7 @@ export type RepoPolicy = {
     readonly max_fix_rounds: number;
     readonly require_plan_review: boolean;
     readonly require_pr_review: boolean;
+    readonly required_pr_approvals?: number;
     readonly agent_review_counts_as_human_review: false;
   };
 };
@@ -466,6 +467,12 @@ function validateReviewPolicy(value: unknown, errors: string[]): void {
   }
   if (typeof value.require_pr_review !== "boolean") {
     errors.push("review.require_pr_review must be a boolean");
+  }
+  if (
+    value.required_pr_approvals !== undefined &&
+    (!Number.isInteger(value.required_pr_approvals) || value.required_pr_approvals < 1 || value.required_pr_approvals > 10)
+  ) {
+    errors.push("review.required_pr_approvals must be an integer from 1 to 10");
   }
   if (value.agent_review_counts_as_human_review !== false) {
     errors.push("review.agent_review_counts_as_human_review must be false");

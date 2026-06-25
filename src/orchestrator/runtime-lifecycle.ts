@@ -23,6 +23,7 @@ export type RuntimeLifecycleAgents = {
   readonly planReviewer: AgentAdapter<typeof AgentRole.PlanReviewer>;
   readonly implementer: AgentAdapter<typeof AgentRole.Implementer>;
   readonly prReviewer: AgentAdapter<typeof AgentRole.PrReviewer>;
+  readonly prReviewers?: readonly AgentAdapter<typeof AgentRole.PrReviewer>[];
 };
 
 export type RuntimeLifecycleRepo = {
@@ -190,21 +191,16 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
   });
   transition(input.database, runId, WorkflowState.PrOpened, WorkflowState.PrReviewing, commit.headSha, WorkflowEvent.PullRequestBound, now);
 
-  const prReview = await runAgent(input.agents.prReviewer, prReviewerEnvelope(input, runId, pr, commit.headSha, now), "Review the PR.", input.workspace.path);
-  const prReviewEvent = mapPrReviewVerdictToEvent(prReview, commit.headSha);
-  if (prReviewEvent !== WorkflowEvent.AgentPrReviewApproved) {
-    throw new Error("PR review did not approve current head");
-  }
-  await input.github.submitPullRequestReview({
-    repo: input.event.repo,
+  const requiredPrApprovals = input.policy.review.required_pr_approvals ?? (input.policy.review.require_pr_review ? 1 : 0);
+  const prReviews = await runRequiredPrReviews({
+    input,
+    runId,
     pr,
     headSha: commit.headSha,
-    event: "COMMENT",
-    body: renderPrReviewBody(prReview, pr),
-    idempotencyKey: `${runId}:pr-reviewer:comment`,
-    requestHash: createRequestHash({ runId, prReview })
+    requiredPrApprovals,
+    now
   });
-  transition(input.database, runId, WorkflowState.PrReviewing, WorkflowState.CiWaiting, commit.headSha, prReviewEvent, now);
+  transition(input.database, runId, WorkflowState.PrReviewing, WorkflowState.CiWaiting, commit.headSha, WorkflowEvent.AgentPrReviewApproved, now);
 
   const checks = await input.github.readCheckSummary({
     repo: input.event.repo,
@@ -234,7 +230,9 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     allowedRisks: input.policy.merge.auto_merge.allowed_risks,
     blockedLabels: input.policy.merge.auto_merge.blocked_labels,
     planReviewCurrent: planReview.verdict === "APPROVED",
-    prReviewHeadSha: prReview.head_sha,
+    prReviewHeadSha: prReviews[0]?.head_sha,
+    approvedPrReviewCount: prReviews.length,
+    requiredPrApprovals,
     checksSucceeded: true,
     githubMergeable: true,
     mergeMethod: input.policy.merge.default_method,
@@ -296,6 +294,48 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     mergeSha: merge.mergeSha,
     snapshot
   };
+}
+
+async function runRequiredPrReviews(input: {
+  readonly input: RunIssueLifecycleInput;
+  readonly runId: string;
+  readonly pr: number;
+  readonly headSha: string;
+  readonly requiredPrApprovals: number;
+  readonly now: Date;
+}): Promise<readonly ReviewerVerdict[]> {
+  if (input.requiredPrApprovals === 0) {
+    return [];
+  }
+  const reviewers = input.input.agents.prReviewers ?? [input.input.agents.prReviewer];
+  const requiredReviewers = reviewers.slice(0, input.requiredPrApprovals);
+  if (requiredReviewers.length < input.requiredPrApprovals) {
+    throw new Error(`not enough independent PR reviewers configured: required ${input.requiredPrApprovals}, available ${requiredReviewers.length}`);
+  }
+  const approved: ReviewerVerdict[] = [];
+  for (const [index, reviewer] of requiredReviewers.entries()) {
+    const prReview = await runAgent(
+      reviewer,
+      prReviewerEnvelope(input.input, input.runId, input.pr, input.headSha, input.now),
+      `Review the PR independently as reviewer ${index + 1}.`,
+      input.input.workspace.path
+    );
+    const prReviewEvent = mapPrReviewVerdictToEvent(prReview, input.headSha);
+    if (prReviewEvent !== WorkflowEvent.AgentPrReviewApproved) {
+      throw new Error(`PR reviewer ${index + 1} did not approve current head`);
+    }
+    await input.input.github.submitPullRequestReview({
+      repo: input.input.event.repo,
+      pr: input.pr,
+      headSha: input.headSha,
+      event: "COMMENT",
+      body: renderPrReviewBody(prReview, input.pr),
+      idempotencyKey: `${input.runId}:pr-reviewer:${index + 1}:comment`,
+      requestHash: createRequestHash({ runId: input.runId, reviewer: index + 1, prReview })
+    });
+    approved.push(prReview);
+  }
+  return approved;
 }
 
 async function runAgent<Role extends AgentRole>(

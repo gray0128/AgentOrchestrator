@@ -13,6 +13,8 @@ export type MergeDecision = {
     readonly risk_allowed: boolean;
     readonly plan_review_current: boolean;
     readonly pr_review_current: boolean;
+    readonly pr_review_approved_count?: number;
+    readonly pr_review_required_count?: number;
     readonly checks_succeeded: boolean;
     readonly github_mergeable: boolean;
   };
@@ -30,6 +32,8 @@ export type EvaluateMergeGateInput = {
   readonly blockedLabels: readonly string[];
   readonly planReviewCurrent: boolean;
   readonly prReviewHeadSha?: string;
+  readonly approvedPrReviewCount?: number;
+  readonly requiredPrApprovals?: number;
   readonly checksSucceeded: boolean;
   readonly githubMergeable: boolean;
   readonly mergeMethod: "squash" | "merge" | "rebase";
@@ -39,17 +43,21 @@ export type EvaluateMergeGateInput = {
 export function evaluateMergeGate(input: EvaluateMergeGateInput): MergeDecision {
   const labelsAllowed = !input.labels.some((label) => input.blockedLabels.includes(label));
   const riskAllowed = input.allowedRisks.includes(input.risk);
-  const prReviewCurrent = input.prReviewHeadSha === input.currentHeadSha;
+  const requiredPrApprovals = input.requiredPrApprovals ?? 1;
+  const approvedPrReviewCount = input.approvedPrReviewCount ?? (input.prReviewHeadSha === input.currentHeadSha ? 1 : 0);
+  const prReviewCurrent = approvedPrReviewCount >= requiredPrApprovals;
   const checks = {
     labels_allowed: labelsAllowed,
     risk_allowed: riskAllowed,
     plan_review_current: input.planReviewCurrent,
     pr_review_current: prReviewCurrent,
+    pr_review_approved_count: approvedPrReviewCount,
+    pr_review_required_count: requiredPrApprovals,
     checks_succeeded: input.checksSucceeded,
     github_mergeable: input.githubMergeable
   };
   const reasons = Object.entries(checks)
-    .filter(([, passed]) => !passed)
+    .filter(([name, passed]) => typeof passed === "boolean" && !passed && name)
     .map(([name]) => name);
   const waitOnly = !input.checksSucceeded || !input.githubMergeable;
   const decision = reasons.length === 0 ? "MERGE_ALLOWED" : waitOnly && labelsAllowed && riskAllowed ? "WAIT" : "BLOCKED";

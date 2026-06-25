@@ -137,6 +137,8 @@ The current local profile is configured as:
 codex_desktop > grok_build > reasonix > claude_code
 ```
 
+For normal roles, routing selects the first executable candidate. For PR review, `review.required_pr_approvals` can require multiple independent reviewer approvals; the runtime takes that many executable `pr_reviewer` candidates from the default profile in priority order.
+
 ### Repo Policy
 
 Each managed repository should provide a repo policy matching `docs/contracts/schemas/repo-policy.schema.json`.
@@ -151,6 +153,7 @@ Policy controls:
 - `paths.high_risk`: paths that require human handling.
 - `checks.required`: required check names.
 - `review.max_fix_rounds`: fix loop budget.
+- `review.required_pr_approvals`: number of independent coding-agent PR approvals required before merge; defaults to `1` when PR review is enabled.
 - `review.agent_review_counts_as_human_review`: must be `false`.
 
 Minimal policy shape:

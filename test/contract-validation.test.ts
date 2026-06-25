@@ -174,6 +174,41 @@ test("repo policy fixture validates and rejects human-review bypass", () => {
   assert.ok(invalid.errors.some((error) => error.includes("agent_review_counts_as_human_review")));
 });
 
+test("repo policy validates required PR approval count bounds", () => {
+  const policy = repoPolicy();
+
+  assert.deepEqual(
+    validateRepoPolicy({
+      ...policy,
+      review: {
+        ...policy.review,
+        required_pr_approvals: 2
+      }
+    }),
+    {
+      ok: true,
+      value: {
+        ...policy,
+        review: {
+          ...policy.review,
+          required_pr_approvals: 2
+        }
+      }
+    }
+  );
+
+  const invalid = validateRepoPolicy({
+    ...policy,
+    review: {
+      ...policy.review,
+      required_pr_approvals: 0
+    }
+  });
+
+  assert.equal(invalid.ok, false);
+  assert.ok(invalid.errors.some((error) => error.includes("review.required_pr_approvals")));
+});
+
 test("local config fixture validates and rejects malformed agents", () => {
   const config = localConfig();
 

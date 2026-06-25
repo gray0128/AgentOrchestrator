@@ -1,21 +1,16 @@
-import { AgentRole } from "../agents/adapter.ts";
-import type { AgentAdapter } from "../agents/adapter.ts";
 import type { RepoPolicy } from "../contracts/validation.ts";
 import type { GitHubApiAdapter } from "../github/api.ts";
 import type { StateDatabase, WorkflowRunSnapshot } from "../state/sqlite-store.ts";
 import { DomainEventType } from "../webhooks/domain-event.ts";
 import type { DomainEvent } from "../webhooks/domain-event.ts";
 import { runIssueLifecycle } from "./runtime-lifecycle.ts";
+import type { RuntimeLifecycleAgents } from "./runtime-lifecycle.ts";
 
 export type MockedEndToEndSmokeInput = {
   readonly database: StateDatabase;
   readonly github: GitHubApiAdapter;
-  readonly agents: {
-    readonly planner: AgentAdapter<typeof AgentRole.Planner>;
-    readonly planReviewer: AgentAdapter<typeof AgentRole.PlanReviewer>;
-    readonly implementer: AgentAdapter<typeof AgentRole.Implementer>;
-    readonly prReviewer: AgentAdapter<typeof AgentRole.PrReviewer>;
-  };
+  readonly agents: RuntimeLifecycleAgents;
+  readonly requiredPrApprovals?: number;
   readonly now?: Date;
 };
 
@@ -73,6 +68,16 @@ const smokePolicy: RepoPolicy = {
 
 export async function runMockedEndToEndSmoke(input: MockedEndToEndSmokeInput): Promise<MockedEndToEndSmokeResult> {
   const now = input.now ?? new Date();
+  const policy =
+    input.requiredPrApprovals === undefined
+      ? smokePolicy
+      : {
+          ...smokePolicy,
+          review: {
+            ...smokePolicy.review,
+            required_pr_approvals: input.requiredPrApprovals
+          }
+        };
   return runIssueLifecycle({
     database: input.database,
     github: input.github,
@@ -81,7 +86,7 @@ export async function runMockedEndToEndSmoke(input: MockedEndToEndSmokeInput): P
     repo: smokeRepo,
     issue: smokeIssue,
     workspace: smokeWorkspace,
-    policy: smokePolicy,
+    policy,
     policySummary: "low-risk docs policy",
     now
   });

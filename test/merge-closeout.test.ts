@@ -33,6 +33,27 @@ test("merge gate recomputes labels, risk, reviews, checks, mergeability, and cur
   assert.deepEqual(blocked.reasons, ["labels_allowed", "pr_review_current"]);
 });
 
+test("merge gate requires the configured number of current PR approvals", () => {
+  const underReviewed = evaluateMergeGate({
+    ...allowedInput(),
+    approvedPrReviewCount: 1,
+    requiredPrApprovals: 2
+  });
+  const approved = evaluateMergeGate({
+    ...allowedInput(),
+    approvedPrReviewCount: 2,
+    requiredPrApprovals: 2
+  });
+
+  assert.equal(underReviewed.decision, "BLOCKED");
+  assert.deepEqual(underReviewed.reasons, ["pr_review_current"]);
+  assert.equal(underReviewed.checks.pr_review_approved_count, 1);
+  assert.equal(underReviewed.checks.pr_review_required_count, 2);
+  assert.equal(approved.decision, "MERGE_ALLOWED");
+  assert.equal(approved.checks.pr_review_approved_count, 2);
+  assert.equal(approved.checks.pr_review_required_count, 2);
+});
+
 test("merge API execution uses current head sha and is idempotent", async () => {
   const github = new FakeGitHubApiAdapter();
   const repo = { owner: "octo", name: "repo" };

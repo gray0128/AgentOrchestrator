@@ -636,7 +636,8 @@ function buildProcessAgents(config: LocalConfig): RuntimeLifecycleAgents {
     planner: buildRoleAgent(config, AgentRole.Planner),
     planReviewer: buildRoleAgent(config, AgentRole.PlanReviewer),
     implementer: buildRoleAgent(config, AgentRole.Implementer),
-    prReviewer: buildRoleAgent(config, AgentRole.PrReviewer)
+    prReviewer: buildRoleAgent(config, AgentRole.PrReviewer),
+    prReviewers: buildRoleAgentPool(config, AgentRole.PrReviewer)
   };
 }
 
@@ -648,7 +649,7 @@ function buildRoleAgent<Role extends typeof AgentRole[keyof typeof AgentRole]>(c
   const profiles = Object.entries(config.agent_routing.profiles).map(([name, profile]) => {
     const candidates = (profile.roles[role] ?? [])
       .map((agentName) => config.agent_routing?.catalog[agentName])
-      .filter((agentConfig) => agentConfig && commandExists(agentConfig.command))
+      .filter((agentConfig) => agentConfig && agentCommandAvailable(agentConfig))
       .map((agentConfig) => buildProcessAgent(role, agentConfig));
     return {
       name,
@@ -664,7 +665,20 @@ function buildRoleAgent<Role extends typeof AgentRole[keyof typeof AgentRole]>(c
   });
 }
 
-function buildProcessAgent<Role extends typeof AgentRole[keyof typeof AgentRole]>(role: Role, config: LocalConfig["agents"][ReturnType<typeof roleConfigKey>]) {
+function buildRoleAgentPool<Role extends typeof AgentRole[keyof typeof AgentRole]>(config: LocalConfig, role: Role) {
+  const fallback = buildProcessAgent(role, config.agents[roleConfigKey(role)]);
+  if (!config.agent_routing?.default_profile) {
+    return [fallback];
+  }
+  const profile = config.agent_routing.profiles[config.agent_routing.default_profile];
+  const candidates = (profile?.roles[role] ?? [])
+    .map((agentName) => config.agent_routing?.catalog[agentName])
+    .filter((agentConfig): agentConfig is AgentConfig => Boolean(agentConfig) && agentCommandAvailable(agentConfig))
+    .map((agentConfig) => buildProcessAgent(role, agentConfig));
+  return candidates.length > 0 ? candidates : [fallback];
+}
+
+function buildProcessAgent<Role extends typeof AgentRole[keyof typeof AgentRole]>(role: Role, config: AgentConfig) {
   return new ProcessAgentAdapter({
     role,
     command: config.command,

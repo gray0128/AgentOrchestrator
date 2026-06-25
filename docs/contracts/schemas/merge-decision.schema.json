@@ -24,6 +24,8 @@
         "risk_allowed": { "type": "boolean" },
         "plan_review_current": { "type": "boolean" },
         "pr_review_current": { "type": "boolean" },
+        "pr_review_approved_count": { "type": "integer", "minimum": 0 },
+        "pr_review_required_count": { "type": "integer", "minimum": 0 },
         "checks_succeeded": { "type": "boolean" },
         "github_mergeable": { "type": "boolean" }
       }
