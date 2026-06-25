@@ -1,6 +1,6 @@
 # Test And Acceptance Log
 
-Updated: 2026-06-24
+Updated: 2026-06-25
 
 | Date | Scope | Command | Outcome | Notes |
 | --- | --- | --- | --- | --- |
@@ -56,3 +56,4 @@ Updated: 2026-06-24
 | 2026-06-24 | T-M6-010 signed live smoke delivery driver | `node --experimental-strip-types --test test/cli.test.ts`; `npm run check` | Passed | Added `live-smoke` to sign and send an autopilot Issue webhook to a running service and report the response; CLI tests cover successful signed delivery and missing webhook secret; full check passed with 124 total tests. |
 | 2026-06-25 | CLI command alias | `./src/cli.ts validate --config config/local.example.json --schema-dir docs/contracts/schemas`; `npm link`; `ao validate --config config/local.example.json --schema-dir docs/contracts/schemas`; `npm run check` | Passed | Registered package bin `ao`, made the CLI entrypoint executable with Node type stripping, linked it on the local PATH, and updated operator docs to use `ao` examples. |
 | 2026-06-25 | Long-term Cloudflare Tunnel and live GitHub App webhook | `curl -sS -i https://ao.bobocai.win/healthz`; `ao live-check --config config/local.json`; GitHub Issue #11 / PR #12 live webhook smoke; `npm run check` | Passed | `ao.bobocai.win` returned healthz 200 through tunnel `agent-orchestrator-ao`; live-check confirmed GitHub App mode, webhook secret, policy, and absolute agent commands; GitHub App webhook drove issue #11 to merged PR #12 and final `issue_closed`; full check passed with 124 tests. |
+| 2026-06-25 | CLI setup productization | `node --experimental-strip-types --test test/cli.test.ts`; `npm run check` | Passed | Added `ao init-config`, `ao doctor`, help output, and actionable missing-config guidance; CLI tests cover generated config validation, overwrite protection, redacted doctor checks, and setup command discoverability; full check passed with 129 tests. |

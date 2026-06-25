@@ -1,6 +1,6 @@
 # Milestones
 
-Updated: 2026-06-24
+Updated: 2026-06-25
 
 | Milestone | Status | Evidence | Remaining |
 | --- | --- | --- | --- |
@@ -12,4 +12,4 @@ Updated: 2026-06-24
 | M3 - Implementer creates PR | Done | `npm run check` passes with workspace manager, implementer envelope/result validation, fix-result validation, path policy enforcement, idempotent branch/commit/PR write adapter tests, PR review/check adapter tests, and PR body template tests. | None. |
 | M4 - PR review and CI gate | Done | `npm run check` passes with PR reviewer envelope/verdict validation, current-head check aggregation, fix-loop decisions, and stale-head protection tests. | None. |
 | M5 - Merge and closeout | Done | `npm run check` passes with merge gate evaluator, current-head Merge API execution, branch cleanup, final summary marker, and issue close tests. | None. |
-| M6 - Runtime integration to live GitHub | In progress | T-M6-001 through T-M6-009 are implemented; `serve --github-mode live` has dependency wiring tests; `live-check` validates live prerequisites without GitHub writes; `startServeRuntime` can run the full lifecycle path with mocked GitHub boundary; `npm run smoke:e2e` passes. | Complete T-M6-010 real repository live smoke before claiming externally verified live end-to-end usability. |
+| M6 - Runtime integration to live GitHub | Done | T-M6-001 through T-M6-010 are implemented; `serve --github-mode live` has dependency wiring tests; `live-check` and `doctor` validate live prerequisites without GitHub writes; `startServeRuntime` can run the full lifecycle path; live GitHub App webhook smoke reached issue #11, merged PR #12, closed the Issue, and duplicate delivery handling was verified. | None. |

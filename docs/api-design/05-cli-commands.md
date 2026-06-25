@@ -1,8 +1,49 @@
 # CLI Commands
 
-The MVP may start without a user-facing CLI, but developer and operations commands should be reserved now so scripts and docs remain stable.
+The CLI is the operator surface for local setup, readiness checks, webhook service startup, smoke delivery, reconciliation inspection, and run debugging. Commands must stay scriptable and must not print secret values.
 
 ## Commands
+
+### `ao init-config`
+
+Generates a machine-local config template without writing secrets.
+
+Flags:
+
+- `--repo <owner/name>`: required managed GitHub repository.
+- `--repo-path <checkout-path>`: required local checkout path.
+- `--output <path>`: output config path; defaults to `config/local.json`.
+- `--agent-command <command>`: role agent command; defaults to `codex`.
+- `--default-branch <branch>`: defaults to `main`.
+- `--policy-file <path>`: path inside the managed repo; defaults to `.github/agent-orchestrator.json`.
+- `--force`: replace an existing output file.
+
+Verification:
+
+- Generated config validates against the local config schema before it is written.
+- Existing files are not overwritten unless `--force` is present.
+- Output contains only environment variable names for GitHub App secrets, never secret values.
+
+### `ao doctor`
+
+Runs a redacted, non-writing setup diagnosis for live operation.
+
+Flags:
+
+- `--config <path>`: local config path.
+
+Verification:
+
+- Validates local config.
+- Resolves GitHub App credential environment references and validates offline JWT signing without printing credential values.
+- Requires `AGENT_ORCHESTRATOR_WEBHOOK_SECRET`.
+- Loads each configured repo policy from the local checkout.
+- Verifies configured agent commands are present on the host.
+
+Output:
+
+- JSON summary with `checks[]` entries, each containing `name`, `status`, and `message`.
+- Exit `0` only when every check passes.
 
 ### `ao serve`
 
@@ -29,7 +70,7 @@ Verification:
 
 ### `ao live-check`
 
-Validates live-mode prerequisites without requesting a GitHub installation token or writing to GitHub.
+Validates live-mode prerequisites without requesting a GitHub installation token or writing to GitHub. `doctor` is preferred for a human-friendly aggregate report; `live-check` is kept as the narrow readiness gate used by scripts and acceptance logs.
 
 Flags:
 

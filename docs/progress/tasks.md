@@ -1,6 +1,6 @@
 # Tasks
 
-Updated: 2026-06-24
+Updated: 2026-06-25
 
 ## Pre-Implementation
 
@@ -424,5 +424,5 @@ Verification requirements: `ao live-check --config <local>`; `ao serve --config 
 Acceptance criteria: `live-check` passes with offline JWT signing and without exposing secrets; signed webhook delivery reaches the service; a real low-risk Issue reaches `issue_closed` through the live service; the PR is merged; the branch is cleaned up; the final summary comment exists; duplicate delivery does not duplicate writes.
 Impacted contracts: C-CLI-001, C-SEC-001, C-API-001, C-API-002, C-DATA-001, C-STATE-001, C-MERGE-001.
 Rollback or compatibility plan: If live smoke fails, leave the run in a recoverable blocked/failed state and record the failure in blockers instead of marking M6 done.
-Status: In progress
-Updated at: 2026-06-24
+Status: Done
+Updated at: 2026-06-25

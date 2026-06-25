@@ -4,12 +4,14 @@ GitHub-native Agent Orchestrator for automatically processing labeled GitHub Iss
 
 ## Current Status
 
-The repository now has a runnable local end-to-end runtime path with a mocked GitHub boundary. The contract layer, state-machine primitives, fake and REST GitHub adapters, policy checks and policy loader, renderers, state store, process-backed agent adapter, local CLI, GitHub App token-provider foundation, webhook runtime path, full lifecycle orchestration, and GitHub artifact reconciliation are implemented and covered by tests. `serve --github-mode live` wires validated config into GitHub App auth, the REST adapter, repo policy loading, and process-backed agents. Real repository operation still needs external GitHub App credentials, a reachable webhook URL, and a live low-risk Issue smoke before it can be claimed as externally verified.
+The repository has a runnable local and live end-to-end runtime path. The contract layer, state-machine primitives, fake and REST GitHub adapters, policy checks and policy loader, renderers, state store, process-backed agent adapter, local CLI, GitHub App token-provider foundation, webhook runtime path, full lifecycle orchestration, and GitHub artifact reconciliation are implemented and covered by tests. `serve --github-mode live` wires validated config into GitHub App auth, the REST adapter, repo policy loading, and process-backed agents. A real GitHub App webhook smoke has been verified with a reachable Cloudflare Tunnel, merged PR, issue closeout, and duplicate-delivery safety evidence.
 
 Current runnable surface:
 
 - `npm run check`
 - `npm run smoke:e2e`
+- `ao init-config ...`
+- `ao doctor ...`
 - `ao validate ...`
 - `ao live-check ...`
 - `ao live-smoke ...`
@@ -17,12 +19,12 @@ Current runnable surface:
 - `ao reconcile --dry-run ...`
 - `ao inspect-run ...`
 
-Not implemented yet:
+Still intentionally limited:
 
 - CLI/live scheduling wrapper for GitHub-backed reconciliation.
-- Real repository live smoke verification with external GitHub App credentials and webhook delivery.
+- Non-GitHub providers, hosted UI, and multi-repository transactions.
 
-The external GitHub App credentials and webhook URL are intentionally not committed. See `docs/progress/blockers.md`.
+External GitHub App credentials, webhook secrets, and machine-local tunnel config are intentionally not committed.
 
 ## Requirements
 
@@ -39,11 +41,16 @@ There are two configuration layers.
 
 Local machine configuration lives outside Git and should follow `docs/contracts/schemas/local-config.schema.json`.
 
-Start from:
+Generate a local config:
 
 ```sh
-cp config/local.example.json config/local.json
+ao init-config \
+  --repo <owner/name> \
+  --repo-path /absolute/path/to/checkout \
+  --output config/local.json
 ```
+
+Use `--agent-command <command>` when the role agent is not `codex`. Use `--force` only when you intentionally want to replace an existing local config.
 
 Key fields:
 
@@ -60,9 +67,7 @@ Key fields:
 Example validation:
 
 ```sh
-ao validate \
-  --config config/local.example.json \
-  --schema-dir docs/contracts/schemas
+ao doctor --config config/local.json
 ```
 
 ### Repo Policy
@@ -125,6 +130,12 @@ ao validate \
   --schema-dir docs/contracts/schemas
 ```
 
+`doctor` is the preferred operator readiness check. It validates local config, GitHub App credential environment variables, webhook secret presence, repo policy loading, and agent command availability in one redacted JSON report:
+
+```sh
+ao doctor --config config/local.json
+```
+
 Before a real repository smoke, validate live prerequisites without making GitHub writes:
 
 ```sh
@@ -140,6 +151,43 @@ The tool is provided locally through the `ao` command. From this checkout, run `
 ```sh
 ao <command>
 ```
+
+### `init-config`
+
+Creates a machine-local config file from a small set of required inputs.
+
+```sh
+ao init-config \
+  --repo <owner/name> \
+  --repo-path /absolute/path/to/checkout \
+  --output config/local.json
+```
+
+Common options:
+
+- `--agent-command <command>`: command used for planner, plan reviewer, implementer, and PR reviewer roles. Defaults to `codex`.
+- `--default-branch <branch>`: defaults to `main`.
+- `--policy-file <path>`: path inside the target repo. Defaults to `.github/agent-orchestrator.json`.
+- `--force`: replace an existing output file.
+
+The generated config references environment variable names for secrets. It does not write secret values.
+
+### `doctor`
+
+Runs a non-writing live readiness check with actionable pass/fail items.
+
+```sh
+ao doctor --config config/local.json
+```
+
+Behavior:
+
+- Validates local config.
+- Confirms GitHub App credential environment variables are present and the private key can sign a JWT.
+- Confirms `AGENT_ORCHESTRATOR_WEBHOOK_SECRET` is present.
+- Loads each configured repo policy from its checkout path.
+- Verifies all configured agent commands are executable.
+- Prints redacted JSON and exits nonzero when any required item fails.
 
 ### `validate`
 
@@ -181,11 +229,6 @@ Current behavior:
 - With `--github-mode live`, wires GitHub App auth, REST GitHub writes, repo policy loading, and configured process agents.
 - With lifecycle adapters configured, signed autopilot Issue webhook intake can advance through the full low-risk lifecycle.
 - Does not log tokens, private keys, webhook secrets, or installation tokens.
-
-Still required before externally verified live automation:
-
-- Start reconciliation scheduling.
-- Run a real repository smoke with GitHub App credentials, a reachable webhook URL, and a low-risk Issue.
 
 ### `live-check`
 
@@ -257,25 +300,27 @@ By repo and issue:
 ao inspect-run --config config/local.example.json --repo <owner/name> --issue <number>
 ```
 
-Useful additions after those commands:
+Possible future addition:
 
-- `init-config`: generate a local config template.
 - `policy validate`: validate only repo policy with clearer policy-specific output.
-- `doctor`: verify Node version, GitHub App credentials, webhook secret presence, repo checkout paths, agent commands, and write permissions.
 
 ## Can It Run End To End Now?
 
 Locally, yes: `npm run smoke:e2e` drives a low-risk Issue through webhook intake, planning, plan review, implementation PR, current-head review/check gate, merge, branch cleanup, final summary, and issue close against a mocked GitHub boundary.
 
-Externally, not yet verified: the live CLI path is wired, but a real repository smoke still requires GitHub App credentials, `AGENT_ORCHESTRATOR_WEBHOOK_SECRET`, a reachable webhook URL, configured agent commands, and a low-risk Issue.
+Externally, yes for the current verified single-repository setup: a GitHub App webhook reached the live service through `https://ao.bobocai.win`, drove a low-risk Issue to a merged PR and closed Issue, and duplicate delivery handling was verified.
 
-To finish live verification:
+Live verification recipe:
 
-1. Run `ao live-check --config config/local.json`.
-2. Start `ao serve --config config/local.json --github-mode live`.
-3. Deliver a signed GitHub Issue `labeled` webhook with `agent:autopilot`, or use `ao live-smoke --url <service> --repo <owner/name> --issue <number>` against an existing low-risk Issue.
-4. Confirm the run with `ao inspect-run --config config/local.json --repo <owner/name> --issue <number>`.
-5. Verify duplicate delivery does not duplicate GitHub writes.
+1. Run `ao init-config --repo <owner/name> --repo-path <checkout-path> --output config/local.json`.
+2. Set the GitHub App credential environment variables and `AGENT_ORCHESTRATOR_WEBHOOK_SECRET`.
+3. Run `ao doctor --config config/local.json`.
+4. Run `ao live-check --config config/local.json`.
+5. Start `ao serve --config config/local.json --github-mode live`.
+6. Configure the GitHub App webhook URL to the reachable `/webhook` endpoint.
+7. Add `agent:autopilot` and an allowed risk label to a low-risk Issue.
+8. Confirm the run with `ao inspect-run --config config/local.json --repo <owner/name> --issue <number>`.
+9. Verify duplicate delivery does not duplicate GitHub writes.
 
 ## Development Verification
 

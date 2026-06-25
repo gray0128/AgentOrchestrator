@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { generateKeyPairSync } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -18,6 +18,121 @@ import {
   startServeRuntime,
   createSignature
 } from "../src/index.ts";
+
+test("help CLI lists productized setup commands", async () => {
+  const output: string[] = [];
+  const errors: string[] = [];
+
+  const exitCode = await runCli(["help"], {
+    stdout: (line) => output.push(line),
+    stderr: (line) => errors.push(line)
+  });
+
+  assert.equal(exitCode, 0);
+  assert.match(output.join("\n"), /ao init-config/);
+  assert.match(output.join("\n"), /ao doctor/);
+  assert.deepEqual(errors, []);
+});
+
+test("init-config writes a validated local config template", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "agent-orchestrator-cli-"));
+  const outputConfig = join(dir, "local.json");
+  const output: string[] = [];
+  const errors: string[] = [];
+
+  const exitCode = await runCli(
+    [
+      "init-config",
+      "--repo",
+      "octo/repo",
+      "--repo-path",
+      "/tmp/repo",
+      "--agent-command",
+      "node",
+      "--output",
+      outputConfig
+    ],
+    {
+      stdout: (line) => output.push(line),
+      stderr: (line) => errors.push(line)
+    }
+  );
+  const result = JSON.parse(output[0] ?? "{}");
+  const generated = JSON.parse(readFileSync(outputConfig, "utf8"));
+
+  assert.equal(exitCode, 0);
+  assert.equal(result.command, "init-config");
+  assert.equal(generated.repositories[0].owner, "octo");
+  assert.equal(generated.repositories[0].name, "repo");
+  assert.equal(generated.repositories[0].local_path, "/tmp/repo");
+  assert.equal(generated.agents.planner.command, "node");
+  assert.equal(generated.agents.planner.adapter, "custom");
+  assert.deepEqual(errors, []);
+});
+
+test("init-config refuses to overwrite without force", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "agent-orchestrator-cli-"));
+  const outputConfig = join(dir, "local.json");
+  const output: string[] = [];
+  const errors: string[] = [];
+  writeFileSync(outputConfig, "{}", "utf8");
+
+  const exitCode = await runCli(["init-config", "--repo", "octo/repo", "--repo-path", "/tmp/repo", "--output", outputConfig], {
+    stdout: (line) => output.push(line),
+    stderr: (line) => errors.push(line)
+  });
+
+  assert.equal(exitCode, 1);
+  assert.deepEqual(output, []);
+  assert.match(errors.join("\n"), /already exists/);
+});
+
+test("doctor reports live setup checks without exposing secrets", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "agent-orchestrator-cli-"));
+  const repoDir = join(dir, "repo");
+  const policyDir = join(repoDir, ".github");
+  const config = join(dir, "local.json");
+  const output: string[] = [];
+  const errors: string[] = [];
+  const restoreEnv = setLiveEnv();
+  mkdirSync(policyDir, { recursive: true });
+  writeFileSync(join(policyDir, "agent-orchestrator.json"), JSON.stringify(repoPolicy()), "utf8");
+  writeFileSync(config, JSON.stringify(localConfig({ repoPath: repoDir, agentCommand: "node", github: true })), "utf8");
+
+  try {
+    const exitCode = await runCli(["doctor", "--config", config], {
+      stdout: (line) => output.push(line),
+      stderr: (line) => errors.push(line)
+    });
+    const result = JSON.parse(output[0] ?? "{}");
+
+    assert.equal(exitCode, 0);
+    assert.equal(result.command, "doctor");
+    assert.equal(result.ok, true);
+    assert.ok(result.checks.length >= 7);
+    assert.equal(result.checks.every((check: { status: string }) => check.status === "pass"), true);
+    assert.deepEqual(errors, []);
+    assert.doesNotMatch(JSON.stringify(result), /webhook-secret|installation-secret|PRIVATE KEY/);
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("missing config error points to init-config", async () => {
+  const output: string[] = [];
+  const errors: string[] = [];
+
+  const exitCode = await runCli(["doctor"], {
+    stdout: (line) => output.push(line),
+    stderr: (line) => errors.push(line)
+  });
+  const result = JSON.parse(output[0] ?? "{}");
+
+  assert.equal(exitCode, 1);
+  assert.equal(result.ok, false);
+  assert.match(JSON.stringify(result), /ao init-config/);
+  assert.deepEqual(errors, []);
+});
 
 test("validate CLI accepts config, policy, and schema directory fixtures", async () => {
   const dir = mkdtempSync(join(tmpdir(), "agent-orchestrator-cli-"));

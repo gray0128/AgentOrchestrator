@@ -1,6 +1,6 @@
 #!/usr/bin/env -S node --experimental-strip-types
 import { createServer } from "node:http";
-import { accessSync, constants, mkdirSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { accessSync, constants, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -85,6 +85,16 @@ const consoleIo: CliIo = {
 export async function runCli(args: readonly string[], io: CliIo = consoleIo): Promise<number> {
   const [command, ...rest] = args;
   try {
+    if (!command || command === "help" || command === "--help" || command === "-h") {
+      io.stdout(renderHelp());
+      return 0;
+    }
+    if (command === "init-config") {
+      return await runInitConfig(rest, io);
+    }
+    if (command === "doctor") {
+      return await runDoctor(rest, io);
+    }
     if (command === "validate") {
       return await runValidate(rest, io);
     }
@@ -103,12 +113,77 @@ export async function runCli(args: readonly string[], io: CliIo = consoleIo): Pr
     if (command === "inspect-run") {
       return await runInspectRun(rest, io);
     }
-    io.stderr("Unsupported command. Available commands: validate, serve, live-check, live-smoke, reconcile, inspect-run");
+    io.stderr(`Unsupported command: ${command}\n\n${renderHelp()}`);
     return 1;
   } catch (error) {
     io.stderr(sanitizeMarkdown(error instanceof Error ? error.message : String(error)));
     return 1;
   }
+}
+
+async function runInitConfig(args: readonly string[], io: CliIo): Promise<number> {
+  const flags = parseFlags(args);
+  const outputPath = stringFlag(flags, "output") ?? "config/local.json";
+  const repo = parseRepoFlag(requiredStringFlag(flags, "repo", "init-config requires --repo <owner/name>"));
+  const repoPath = requiredStringFlag(flags, "repoPath", "init-config requires --repo-path <checkout-path>");
+  const agentCommand = stringFlag(flags, "agentCommand") ?? "codex";
+  const config = buildLocalConfigTemplate({
+    repo,
+    repoPath,
+    agentCommand,
+    defaultBranch: stringFlag(flags, "defaultBranch") ?? "main",
+    policyFile: stringFlag(flags, "policyFile") ?? ".github/agent-orchestrator.json"
+  });
+  const validation = validateLocalConfig(config);
+  if (!validation.ok) {
+    io.stderr(`${ErrorCode.LocalConfigInvalid}: generated config is invalid: ${validation.errors.join("; ")}`);
+    return 1;
+  }
+
+  if (!hasFlag(flags, "force") && pathExists(outputPath)) {
+    io.stderr(`${ErrorCode.LocalConfigInvalid}: ${outputPath} already exists; pass --force to replace it`);
+    return 1;
+  }
+
+  ensureParentDirectory(outputPath);
+  writeFileSync(outputPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  io.stdout(
+    JSON.stringify({
+      ok: true,
+      command: "init-config",
+      output: outputPath,
+      next: [
+        `Set AGENT_ORCHESTRATOR_GITHUB_APP_ID, AGENT_ORCHESTRATOR_GITHUB_PRIVATE_KEY, AGENT_ORCHESTRATOR_GITHUB_INSTALLATION_ID, and AGENT_ORCHESTRATOR_WEBHOOK_SECRET.`,
+        `Review ${outputPath}.`,
+        `Run ao doctor --config ${outputPath}.`
+      ]
+    })
+  );
+  return 0;
+}
+
+async function runDoctor(args: readonly string[], io: CliIo): Promise<number> {
+  const flags = parseFlags(args);
+  const checks: DoctorCheck[] = [];
+  let config: LocalConfig | undefined;
+
+  try {
+    config = loadValidLocalConfig(flags);
+    checks.push({ name: "local_config", status: "pass", message: "local config is valid" });
+  } catch (error) {
+    checks.push({ name: "local_config", status: "fail", message: sanitizeMarkdown(error instanceof Error ? error.message : String(error)) });
+  }
+
+  if (config) {
+    checks.push(...doctorGitHubCredentials(config));
+    checks.push(doctorWebhookSecret());
+    checks.push(...doctorRepositories(config));
+    checks.push(...doctorAgents(config));
+  }
+
+  const ok = checks.every((check) => check.status === "pass");
+  io.stdout(JSON.stringify({ ok, command: "doctor", checks }));
+  return ok ? 0 : 1;
 }
 
 async function runValidate(args: readonly string[], io: CliIo): Promise<number> {
@@ -367,6 +442,129 @@ function requiredStringFlag(flags: CliFlags, name: string, message: string): str
     throw new Error(`${ErrorCode.LocalConfigInvalid}: ${message}`);
   }
   return value;
+}
+
+type LocalConfigTemplateInput = {
+  readonly repo: { readonly owner: string; readonly name: string };
+  readonly repoPath: string;
+  readonly agentCommand: string;
+  readonly defaultBranch: string;
+  readonly policyFile: string;
+};
+
+function buildLocalConfigTemplate(input: LocalConfigTemplateInput): LocalConfig {
+  const readOnlyAgent = buildAgentConfig(input.agentCommand, "read_only");
+  return {
+    version: 1,
+    github: {
+      api_base_url: "https://api.github.com",
+      auth: {
+        mode: "app",
+        app_id_env: "AGENT_ORCHESTRATOR_GITHUB_APP_ID",
+        private_key_env: "AGENT_ORCHESTRATOR_GITHUB_PRIVATE_KEY",
+        installation_id_env: "AGENT_ORCHESTRATOR_GITHUB_INSTALLATION_ID"
+      }
+    },
+    database: { path: "./data/orchestrator.sqlite" },
+    workspaces: { root: "./workspaces", cleanup_after_days: 7 },
+    repositories: [
+      {
+        owner: input.repo.owner,
+        name: input.repo.name,
+        local_path: input.repoPath,
+        default_branch: input.defaultBranch,
+        policy_file: input.policyFile
+      }
+    ],
+    agents: {
+      planner: readOnlyAgent,
+      plan_reviewer: readOnlyAgent,
+      implementer: buildAgentConfig(input.agentCommand, "write_worktree"),
+      pr_reviewer: readOnlyAgent,
+      merge_agent: { adapter: "builtin", mode: "deterministic" }
+    }
+  };
+}
+
+function buildAgentConfig(command: string, mode: "read_only" | "write_worktree") {
+  return {
+    adapter: inferAgentAdapter(command),
+    command,
+    args: [],
+    mode,
+    network: "deny" as const
+  };
+}
+
+function inferAgentAdapter(command: string): "codex" | "claude" | "custom" {
+  const lower = command.toLowerCase();
+  if (lower.endsWith("codex") || lower === "codex") {
+    return "codex";
+  }
+  if (lower.endsWith("claude") || lower === "claude") {
+    return "claude";
+  }
+  return "custom";
+}
+
+type DoctorCheck = {
+  readonly name: string;
+  readonly status: "pass" | "fail";
+  readonly message: string;
+};
+
+function doctorGitHubCredentials(config: LocalConfig): readonly DoctorCheck[] {
+  const refs = getGitHubAppCredentialRefs(config);
+  if (!refs) {
+    return [{ name: "github_app_credentials", status: "fail", message: "github auth config is required for live mode" }];
+  }
+  try {
+    const credentials = resolveGitHubAppCredentials(refs, process.env);
+    createGitHubAppJwt({ appId: credentials.appId, privateKey: credentials.privateKey, now: new Date() });
+    return [{ name: "github_app_credentials", status: "pass", message: "GitHub App credential env vars are present and the private key can sign a JWT" }];
+  } catch (error) {
+    return [
+      {
+        name: "github_app_credentials",
+        status: "fail",
+        message: sanitizeMarkdown(error instanceof Error ? error.message : String(error))
+      }
+    ];
+  }
+}
+
+function doctorWebhookSecret(): DoctorCheck {
+  return process.env.AGENT_ORCHESTRATOR_WEBHOOK_SECRET
+    ? { name: "webhook_secret", status: "pass", message: "AGENT_ORCHESTRATOR_WEBHOOK_SECRET is set" }
+    : { name: "webhook_secret", status: "fail", message: "AGENT_ORCHESTRATOR_WEBHOOK_SECRET is required for GitHub webhooks" };
+}
+
+function doctorRepositories(config: LocalConfig): readonly DoctorCheck[] {
+  return config.repositories.map((repo) => {
+    try {
+      accessSync(repo.local_path, constants.R_OK);
+      const loaded = loadRepoPolicy(repo);
+      return {
+        name: `repo_policy:${repo.owner}/${repo.name}`,
+        status: "pass" as const,
+        message: `loaded ${loaded.path}`
+      };
+    } catch (error) {
+      return {
+        name: `repo_policy:${repo.owner}/${repo.name}`,
+        status: "fail" as const,
+        message: sanitizeMarkdown(error instanceof Error ? error.message : String(error))
+      };
+    }
+  });
+}
+
+function doctorAgents(config: LocalConfig): readonly DoctorCheck[] {
+  return checkAgentCommands(config).map((agent) => ({
+    name: `agent_command:${agent.role}`,
+    status: agent.available ? "pass" : "fail",
+    message: agent.available ? `${agent.command} is available` : `${agent.command} was not found or is not executable`
+  }));
 }
 
 function parseRepoFlag(value: string): { readonly owner: string; readonly name: string } {
@@ -747,10 +945,19 @@ function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+function pathExists(path: string): boolean {
+  try {
+    accessSync(path, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function loadValidLocalConfig(flags: CliFlags): LocalConfig {
   const path = stringFlag(flags, "config") ?? process.env.AGENT_ORCHESTRATOR_CONFIG;
   if (!path) {
-    throw new Error(`${ErrorCode.LocalConfigInvalid}: --config is required`);
+    throw new Error(`${ErrorCode.LocalConfigInvalid}: --config is required. Start with ao init-config --repo <owner/name> --repo-path <checkout-path>.`);
   }
 
   const config = readJson(path);
@@ -871,6 +1078,29 @@ async function readRequestBody(
 
 function singleHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function renderHelp(): string {
+  return [
+    "AgentOrchestrator CLI",
+    "",
+    "Usage:",
+    "  ao init-config --repo <owner/name> --repo-path <checkout-path> [--output config/local.json]",
+    "  ao doctor --config <path>",
+    "  ao validate [--config <path>] [--policy <path>] [--schema-dir <path>]",
+    "  ao live-check --config <path>",
+    "  ao serve --config <path> [--github-mode mock|live] [--host 127.0.0.1] [--port 3000]",
+    "  ao live-smoke --url <service-url> --repo <owner/name> --issue <number>",
+    "  ao reconcile --config <path> --dry-run",
+    "  ao inspect-run --config <path> (--run-id <id> | --repo <owner/name> --issue <number>)",
+    "",
+    "First run:",
+    "  ao init-config --repo gray0128/claw-owner-task --repo-path /path/to/checkout",
+    "  ao doctor --config config/local.json",
+    "  ao serve --config config/local.json --github-mode live",
+    "",
+    "Secrets are read from environment variables and are never written by init-config."
+  ].join("\n");
 }
 
 async function waitForShutdown(runtime: ServeRuntime): Promise<void> {
