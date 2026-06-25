@@ -6,6 +6,7 @@
 - Agent outputs are untrusted proposals until schema validation, policy validation, and actual repository state validation succeed.
 - GitHub installation tokens are only available inside the GitHub API Adapter and controlled Git transport code.
 - Agent prompts must not include installation tokens, private keys, webhook secrets, or local config secrets.
+- Local config may reference secret-bearing environment variable names, but must not store app private keys, webhook secrets, installation tokens, or personal access tokens directly.
 
 ## GitHub App Permissions
 
@@ -26,6 +27,23 @@ Optional:
 | Permission | Level | Purpose |
 | --- | --- | --- |
 | Administration | read | Direct branch protection config reads when explicitly enabled. |
+
+## GitHub App Credential Source
+
+Live mode reads GitHub App identity from local config environment variable references:
+
+| Field | Meaning |
+| --- | --- |
+| `github.auth.app_id_env` | Environment variable containing the GitHub App id. |
+| `github.auth.private_key_env` | Environment variable containing the PEM private key or base64-encoded PEM. |
+| `github.auth.installation_id_env` | Environment variable containing the target installation id. |
+
+Rules:
+
+- These fields name environment variables; they are not the secret values.
+- Missing values fail live mode before accepting repository-changing work.
+- Dry-run validation and mock-mode local tests do not require these environment variables.
+- CLI output, comments, logs, and agent envelopes must redact any secret-looking resolved value.
 
 ## Webhook Intake
 

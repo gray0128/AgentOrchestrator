@@ -30,7 +30,7 @@ This directory is the pre-implementation contract layer for GitHub-native Agent 
 - `schemas/implementation-result.schema.json`: Implementer output after code changes.
 - `schemas/fix-result.schema.json`: Implementer output after review or CI repair.
 - `schemas/merge-decision.schema.json`: Deterministic merge gate decision.
-- `schemas/repo-policy.schema.json`: Repository `.github/agent-orchestrator.yml` structure.
+- `schemas/repo-policy.schema.json`: Repository `.github/agent-orchestrator.json` structure.
 - `schemas/local-config.schema.json`: Local orchestrator configuration.
 - `schemas/domain-event.schema.json`: Normalized internal event envelope.
 - `schemas/github-write.schema.json`: Idempotent GitHub write-action record.

@@ -7,10 +7,14 @@ import type {
   GitHubWriteResult,
   IssueCommentWriteInput,
   IssueCommentWriteResult,
+  CheckSummaryReadResult,
   CloseIssueInput,
   MergePullRequestInput,
   MergePullRequestResult,
-  PullRequestWriteInput
+  PullRequestWriteInput,
+  ReadCheckSummaryInput,
+  SetIssueLabelsInput,
+  SubmitPullRequestReviewInput
 } from "./api.ts";
 
 export type StoredIssueComment = IssueCommentWriteInput & {
@@ -22,9 +26,12 @@ export class FakeGitHubApiAdapter implements GitHubApiAdapter {
   readonly branches: CreateBranchInput[] = [];
   readonly commits: CommitChangesInput[] = [];
   readonly pullRequests: PullRequestWriteInput[] = [];
+  readonly issueLabels: SetIssueLabelsInput[] = [];
+  readonly pullRequestReviews: SubmitPullRequestReviewInput[] = [];
   readonly merges: MergePullRequestInput[] = [];
   readonly deletedBranches: DeleteBranchInput[] = [];
   readonly closedIssues: CloseIssueInput[] = [];
+  readonly checkSummaries = new Map<string, CheckSummaryReadResult>();
   readonly commentsByIdempotencyKey = new Map<string, StoredIssueComment>();
   readonly refsByIdempotencyKey = new Map<string, GitHubWriteResult | CommitChangesResult | MergePullRequestResult>();
 
@@ -39,6 +46,18 @@ export class FakeGitHubApiAdapter implements GitHubApiAdapter {
     this.issueComments.push(stored);
     this.commentsByIdempotencyKey.set(input.idempotencyKey, stored);
     return { responseRef, created: true };
+  }
+
+  async setIssueLabels(input: SetIssueLabelsInput): Promise<GitHubWriteResult> {
+    const existing = this.refsByIdempotencyKey.get(input.idempotencyKey);
+    if (existing) {
+      return { responseRef: existing.responseRef, created: false };
+    }
+
+    const result = { responseRef: `issue:${input.issue}:labels`, created: true };
+    this.issueLabels.push(input);
+    this.refsByIdempotencyKey.set(input.idempotencyKey, result);
+    return result;
   }
 
   async createBranch(input: CreateBranchInput): Promise<GitHubWriteResult> {
@@ -76,6 +95,29 @@ export class FakeGitHubApiAdapter implements GitHubApiAdapter {
     this.pullRequests.push(input);
     this.refsByIdempotencyKey.set(input.idempotencyKey, result);
     return result;
+  }
+
+  async submitPullRequestReview(input: SubmitPullRequestReviewInput): Promise<GitHubWriteResult> {
+    const existing = this.refsByIdempotencyKey.get(input.idempotencyKey);
+    if (existing) {
+      return { responseRef: existing.responseRef, created: false };
+    }
+
+    const result = { responseRef: `pr:${input.pr}:review:${this.pullRequestReviews.length + 1}`, created: true };
+    this.pullRequestReviews.push(input);
+    this.refsByIdempotencyKey.set(input.idempotencyKey, result);
+    return result;
+  }
+
+  async readCheckSummary(input: ReadCheckSummaryInput): Promise<CheckSummaryReadResult> {
+    const key = `${input.repo.owner}/${input.repo.name}#${input.pr}@${input.headSha}`;
+    return (
+      this.checkSummaries.get(key) ?? {
+        responseRef: `checks:${input.pr}:${input.headSha}`,
+        headSha: input.headSha,
+        checks: input.requiredChecks.map((name) => ({ name, conclusion: "pending" }))
+      }
+    );
   }
 
   async mergePullRequest(input: MergePullRequestInput): Promise<MergePullRequestResult> {

@@ -64,10 +64,181 @@ export type InvalidateHeadResult =
   | { readonly invalidated: true; readonly previousHeadSha: string | null }
   | { readonly invalidated: false; readonly reason: "same_head" | "run_not_found" };
 
+export type RepairWorkflowRunInput = {
+  readonly runId: string;
+  readonly nextState: string;
+  readonly prNumber?: number;
+  readonly headSha?: string;
+  readonly eventType: string;
+  readonly reason: string;
+  readonly now: Date;
+};
+
+export type RepairWorkflowRunResult =
+  | { readonly repaired: true; readonly previousState: string }
+  | { readonly repaired: false; readonly reason: "run_not_found" | "already_current" };
+
+export type WorkflowRunLookup =
+  | { readonly runId: string }
+  | {
+      readonly repoOwner: string;
+      readonly repoName: string;
+      readonly issueNumber: number;
+    };
+
+export type WorkflowRunSnapshot = {
+  readonly run: {
+    readonly run_id: string;
+    readonly repo_owner: string;
+    readonly repo_name: string;
+    readonly issue_number: number;
+    readonly pr_number: number | null;
+    readonly state: string;
+    readonly head_sha: string | null;
+    readonly fix_round: number;
+    readonly retry_count: number;
+    readonly lease_owner: string | null;
+    readonly lease_expires_at: string | null;
+    readonly last_error_code: string | null;
+    readonly last_error_message: string | null;
+    readonly created_at: string;
+    readonly updated_at: string;
+  };
+  readonly transitions: readonly {
+    readonly from_state: string;
+    readonly to_state: string;
+    readonly event_type: string;
+    readonly head_sha: string | null;
+    readonly reason: string;
+    readonly created_at: string;
+  }[];
+  readonly actions: readonly {
+    readonly idempotency_key: string;
+    readonly action_type: string;
+    readonly target_type: string;
+    readonly target_id: string | null;
+    readonly response_ref: string | null;
+    readonly status: string;
+    readonly created_at: string;
+    readonly updated_at: string;
+  }[];
+};
+
+export type WorkflowRunForReconciliation = {
+  readonly runId: string;
+  readonly state: string;
+  readonly leaseOwner?: string;
+  readonly leaseExpiresAt?: string;
+};
+
 export function openStateDatabase(path = ":memory:"): StateDatabase {
   const database = new DatabaseSync(path);
   database.exec("PRAGMA foreign_keys = ON");
   return database;
+}
+
+export function getWorkflowRunSnapshot(
+  database: StateDatabase,
+  lookup: WorkflowRunLookup
+): WorkflowRunSnapshot | undefined {
+  const run = isRunIdLookup(lookup)
+    ? (database.prepare(selectWorkflowRunSql("run_id = ?")).get(lookup.runId) as WorkflowRunSnapshot["run"] | undefined)
+    : (database
+        .prepare(selectWorkflowRunSql("repo_owner = ? AND repo_name = ? AND issue_number = ?"))
+        .get(lookup.repoOwner, lookup.repoName, lookup.issueNumber) as WorkflowRunSnapshot["run"] | undefined);
+
+  if (!run) {
+    return undefined;
+  }
+
+  const transitions = database
+    .prepare(
+      `
+        SELECT from_state,
+               to_state,
+               event_type,
+               head_sha,
+               reason,
+               created_at
+        FROM state_transitions
+        WHERE run_id = ?
+        ORDER BY id ASC
+      `
+    )
+    .all(run.run_id) as WorkflowRunSnapshot["transitions"];
+
+  const actions = database
+    .prepare(
+      `
+        SELECT idempotency_key,
+               action_type,
+               target_type,
+               target_id,
+               response_ref,
+               status,
+               created_at,
+               updated_at
+        FROM idempotent_actions
+        WHERE run_id = ?
+        ORDER BY created_at ASC, idempotency_key ASC
+      `
+    )
+    .all(run.run_id) as WorkflowRunSnapshot["actions"];
+
+  return { run, transitions, actions };
+}
+
+export function listWorkflowRunsForReconciliation(database: StateDatabase): readonly WorkflowRunForReconciliation[] {
+  const rows = database
+    .prepare(
+      `
+        SELECT run_id,
+               state,
+               lease_owner,
+               lease_expires_at
+        FROM workflow_runs
+        ORDER BY updated_at ASC, run_id ASC
+      `
+    )
+    .all() as readonly {
+    readonly run_id: string;
+    readonly state: string;
+    readonly lease_owner: string | null;
+    readonly lease_expires_at: string | null;
+  }[];
+
+  return rows.map((row) => ({
+    runId: row.run_id,
+    state: row.state,
+    leaseOwner: row.lease_owner ?? undefined,
+    leaseExpiresAt: row.lease_expires_at ?? undefined
+  }));
+}
+
+function selectWorkflowRunSql(where: string): string {
+  return `
+    SELECT run_id,
+           repo_owner,
+           repo_name,
+           issue_number,
+           pr_number,
+           state,
+           head_sha,
+           fix_round,
+           retry_count,
+           lease_owner,
+           lease_expires_at,
+           last_error_code,
+           last_error_message,
+           created_at,
+           updated_at
+    FROM workflow_runs
+    WHERE ${where}
+  `;
+}
+
+function isRunIdLookup(lookup: WorkflowRunLookup): lookup is { readonly runId: string } {
+  return "runId" in lookup;
 }
 
 export function migrateStateDatabase(database: StateDatabase): void {
@@ -387,4 +558,63 @@ export function invalidateForNewHead(database: StateDatabase, input: InvalidateH
     );
 
   return { invalidated: true, previousHeadSha: row.head_sha ?? null };
+}
+
+export function repairWorkflowRunFromArtifacts(
+  database: StateDatabase,
+  input: RepairWorkflowRunInput
+): RepairWorkflowRunResult {
+  const row = database
+    .prepare("SELECT state, pr_number, head_sha FROM workflow_runs WHERE run_id = ?")
+    .get(input.runId) as
+    | { readonly state: string; readonly pr_number: number | null; readonly head_sha: string | null }
+    | undefined;
+
+  if (!row) {
+    return { repaired: false, reason: "run_not_found" };
+  }
+
+  const nextPrNumber = input.prNumber ?? row.pr_number;
+  const nextHeadSha = input.headSha ?? row.head_sha;
+  if (row.state === input.nextState && row.pr_number === nextPrNumber && row.head_sha === nextHeadSha) {
+    return { repaired: false, reason: "already_current" };
+  }
+
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    database
+      .prepare(
+        `
+          UPDATE workflow_runs
+          SET state = ?,
+              pr_number = ?,
+              head_sha = ?,
+              updated_at = ?
+          WHERE run_id = ?
+        `
+      )
+      .run(input.nextState, nextPrNumber ?? null, nextHeadSha ?? null, input.now.toISOString(), input.runId);
+
+    database
+      .prepare(
+        `
+          INSERT INTO state_transitions (
+            run_id,
+            from_state,
+            to_state,
+            event_type,
+            head_sha,
+            reason,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(input.runId, row.state, input.nextState, input.eventType, nextHeadSha ?? null, input.reason, input.now.toISOString());
+
+    database.exec("COMMIT");
+    return { repaired: true, previousState: row.state };
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
 }

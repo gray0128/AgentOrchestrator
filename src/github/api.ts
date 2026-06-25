@@ -55,6 +55,49 @@ export type PullRequestWriteInput = {
   readonly requestHash: string;
 };
 
+export type SetIssueLabelsInput = {
+  readonly repo: {
+    readonly owner: string;
+    readonly name: string;
+  };
+  readonly issue: number;
+  readonly labels: readonly string[];
+  readonly idempotencyKey: string;
+  readonly requestHash: string;
+};
+
+export type SubmitPullRequestReviewInput = {
+  readonly repo: {
+    readonly owner: string;
+    readonly name: string;
+  };
+  readonly pr: number;
+  readonly headSha: string;
+  readonly event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+  readonly body: string;
+  readonly idempotencyKey: string;
+  readonly requestHash: string;
+};
+
+export type ReadCheckSummaryInput = {
+  readonly repo: {
+    readonly owner: string;
+    readonly name: string;
+  };
+  readonly pr: number;
+  readonly headSha: string;
+  readonly requiredChecks: readonly string[];
+};
+
+export type CheckSummaryReadResult = {
+  readonly responseRef: string;
+  readonly headSha: string;
+  readonly checks: readonly {
+    readonly name: string;
+    readonly conclusion: "success" | "failure" | "cancelled" | "timed_out" | "skipped" | "neutral" | "pending";
+  }[];
+};
+
 export type MergePullRequestInput = {
   readonly repo: {
     readonly owner: string;
@@ -103,9 +146,12 @@ export type MergePullRequestResult = GitHubWriteResult & {
 
 export interface GitHubApiAdapter {
   createOrUpdateIssueComment(input: IssueCommentWriteInput): Promise<IssueCommentWriteResult>;
+  setIssueLabels(input: SetIssueLabelsInput): Promise<GitHubWriteResult>;
   createBranch(input: CreateBranchInput): Promise<GitHubWriteResult>;
   commitChanges(input: CommitChangesInput): Promise<CommitChangesResult>;
   createOrUpdatePullRequest(input: PullRequestWriteInput): Promise<GitHubWriteResult>;
+  submitPullRequestReview(input: SubmitPullRequestReviewInput): Promise<GitHubWriteResult>;
+  readCheckSummary(input: ReadCheckSummaryInput): Promise<CheckSummaryReadResult>;
   mergePullRequest(input: MergePullRequestInput): Promise<MergePullRequestResult>;
   deleteBranch(input: DeleteBranchInput): Promise<GitHubWriteResult>;
   closeIssue(input: CloseIssueInput): Promise<GitHubWriteResult>;

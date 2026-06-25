@@ -53,3 +53,62 @@ test("PR write action is idempotent and preserves current branch evidence", asyn
   assert.equal(github.pullRequests.length, 1);
   assert.equal(github.pullRequests[0]?.headBranch, "agent/issue-123-title");
 });
+
+test("remaining GitHub adapter methods are idempotent and bind expected evidence", async () => {
+  const github = new FakeGitHubApiAdapter();
+  const repo = { owner: "octo", name: "repo" };
+
+  const labelsInput = {
+    repo,
+    issue: 123,
+    labels: ["agent:planning"],
+    idempotencyKey: "run:labels",
+    requestHash: createRequestHash(["agent:planning"])
+  };
+  const reviewInput = {
+    repo,
+    pr: 45,
+    headSha: "head_sha",
+    event: "APPROVE" as const,
+    body: "review body",
+    idempotencyKey: "run:review",
+    requestHash: createRequestHash({ headSha: "head_sha", event: "APPROVE" })
+  };
+  github.checkSummaries.set("octo/repo#45@head_sha", {
+    responseRef: "checks:45:head_sha",
+    headSha: "head_sha",
+    checks: [{ name: "npm run check", conclusion: "success" }]
+  });
+
+  assert.deepEqual(await github.setIssueLabels(labelsInput), {
+    responseRef: "issue:123:labels",
+    created: true
+  });
+  assert.deepEqual(await github.setIssueLabels(labelsInput), {
+    responseRef: "issue:123:labels",
+    created: false
+  });
+  assert.deepEqual(await github.submitPullRequestReview(reviewInput), {
+    responseRef: "pr:45:review:1",
+    created: true
+  });
+  assert.deepEqual(await github.submitPullRequestReview(reviewInput), {
+    responseRef: "pr:45:review:1",
+    created: false
+  });
+  assert.deepEqual(
+    await github.readCheckSummary({
+      repo,
+      pr: 45,
+      headSha: "head_sha",
+      requiredChecks: ["npm run check"]
+    }),
+    {
+      responseRef: "checks:45:head_sha",
+      headSha: "head_sha",
+      checks: [{ name: "npm run check", conclusion: "success" }]
+    }
+  );
+  assert.equal(github.issueLabels[0]?.issue, 123);
+  assert.equal(github.pullRequestReviews[0]?.headSha, "head_sha");
+});

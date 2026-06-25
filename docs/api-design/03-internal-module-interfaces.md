@@ -56,6 +56,28 @@ Rules:
 - Every write method requires an idempotency key.
 - Every write method returns a GitHub reference suitable for `idempotent_actions.response_ref`.
 - Merge requires current PR head `sha`.
+- The real adapter must obtain installation tokens from the GitHub App token provider.
+- The fake adapter is test-only and must not be used by live `serve` or non-dry-run reconciliation paths.
+- Adapter error mapping must use the registered GitHub error codes before surfacing failures to the state machine.
+
+## GitHub App Token Provider
+
+Input:
+
+- Local config environment variable references for app id, private key, and installation id.
+- Runtime environment values.
+- GitHub API base URL.
+
+Output:
+
+- Short-lived installation token and expiry metadata.
+
+Rules:
+
+- Local config stores environment variable names, not secret values.
+- The provider signs a GitHub App JWT locally and exchanges it for an installation token.
+- Tokens are cached only until their expiry window and remain inside GitHub adapter code.
+- Agent prompts, task envelopes, comments, and CLI errors must never include app private keys, webhook secrets, or installation tokens.
 
 ## Agent Router
 

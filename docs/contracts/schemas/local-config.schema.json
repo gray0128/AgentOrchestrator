@@ -7,6 +7,25 @@
   "required": ["version", "database", "workspaces", "repositories", "agents"],
   "properties": {
     "version": { "const": 1 },
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["auth"],
+      "properties": {
+        "api_base_url": { "type": "string", "minLength": 1 },
+        "auth": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "app_id_env", "private_key_env", "installation_id_env"],
+          "properties": {
+            "mode": { "const": "app" },
+            "app_id_env": { "type": "string", "minLength": 1 },
+            "private_key_env": { "type": "string", "minLength": 1 },
+            "installation_id_env": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
     "database": {
       "type": "object",
       "additionalProperties": false,

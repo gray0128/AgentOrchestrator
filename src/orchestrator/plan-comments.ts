@@ -1,10 +1,11 @@
 import type { PlanResult, ReviewerVerdict } from "../agents/adapter.ts";
 import { renderAgentMarker } from "../github/markers.ts";
+import { sanitizeMarkdown } from "../security/redaction.ts";
 
 export function renderPlanComment(plan: PlanResult): string {
   return `## Plan
 
-${plan.summary}
+${sanitizeMarkdown(plan.summary)}
 
 ## Expected Changes
 
@@ -48,7 +49,7 @@ ${renderAgentMarker({
 }
 
 function renderList(items: readonly string[]): string {
-  return items.length > 0 ? items.map((item) => `- ${item}`).join("\n") : "- None";
+  return items.length > 0 ? items.map((item) => `- ${sanitizeMarkdown(item)}`).join("\n") : "- None";
 }
 
 function renderBlockingFindings(verdict: ReviewerVerdict): string {
@@ -56,5 +57,7 @@ function renderBlockingFindings(verdict: ReviewerVerdict): string {
     return "- None";
   }
 
-  return verdict.blocking_findings.map((finding) => `- [${finding.severity}] ${finding.message}`).join("\n");
+  return verdict.blocking_findings
+    .map((finding) => `- [${finding.severity}] ${sanitizeMarkdown(finding.message)}`)
+    .join("\n");
 }

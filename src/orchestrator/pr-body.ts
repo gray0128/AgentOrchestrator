@@ -1,5 +1,6 @@
 import type { ImplementationResult } from "../agents/adapter.ts";
 import { renderAgentMarker } from "../github/markers.ts";
+import { sanitizeMarkdown } from "../security/redaction.ts";
 
 export type RenderPrBodyInput = {
   readonly implementation: ImplementationResult;
@@ -13,7 +14,7 @@ export function renderPullRequestBody(input: RenderPrBodyInput): string {
 
   return `## Summary
 
-${implementation.pr_body_fields.summary}
+${sanitizeMarkdown(implementation.pr_body_fields.summary)}
 
 ## Plan
 
@@ -25,7 +26,7 @@ ${renderList(implementation.pr_body_fields.tests)}
 
 ## Risk
 
-- ${implementation.pr_body_fields.risk}
+- ${sanitizeMarkdown(implementation.pr_body_fields.risk)}
 
 Closes #${implementation.issue}
 
@@ -40,5 +41,5 @@ ${renderAgentMarker({
 }
 
 function renderList(items: readonly string[]): string {
-  return items.length > 0 ? items.map((item) => `- ${item}`).join("\n") : "- Not run";
+  return items.length > 0 ? items.map((item) => `- ${sanitizeMarkdown(item)}`).join("\n") : "- Not run";
 }

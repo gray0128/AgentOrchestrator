@@ -130,3 +130,25 @@ Acceptance:
 - Stale head sha cannot merge.
 - Branch protection rejection blocks instead of bypassing.
 - Final GitHub artifacts allow reconstruction of the run.
+
+## M6 - Runtime Integration To Live GitHub
+
+Goal: Connect the verified local primitives into a real GitHub-backed automation loop that can process a low-risk labeled Issue end to end.
+
+Deliverables:
+
+- GitHub App credential contract and installation token provider.
+- Real GitHub API adapter implementing the existing write/read interface.
+- Repo policy loader from each managed repository checkout.
+- Webhook event handler that acquires leases, creates or updates runs, advances state, and records idempotent actions.
+- Agent router that launches configured role commands and validates their JSON outputs.
+- GitHub-backed reconciliation pass for restart recovery.
+- End-to-end smoke scenario against a real or explicitly mocked GitHub boundary.
+
+Acceptance:
+
+- A labeled low-risk Issue can move from webhook intake to planning status, plan, plan review, implementation PR, current-head review/check gate, merge, branch cleanup, final summary, and issue close.
+- Replayed webhook deliveries and repeated reconciliation passes do not duplicate GitHub writes.
+- All GitHub writes use installation-token authentication and registered idempotency evidence.
+- Agents never receive GitHub installation tokens, private keys, webhook secrets, or local secret values.
+- Missing GitHub App credentials fail fast in live mode and remain optional for local dry-run validation.

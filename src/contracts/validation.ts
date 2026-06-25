@@ -2,6 +2,95 @@ import { ErrorCode } from "../errors.ts";
 import { AgentRole } from "../agents/adapter.ts";
 import type { ImplementationResult, PlanResult, ReviewerVerdict, TaskEnvelope } from "../agents/adapter.ts";
 
+export type FixResult = {
+  readonly schema: "agent-orchestrator.fix-result.v1";
+  readonly role: typeof AgentRole.Implementer;
+  readonly run_id: string;
+  readonly issue: number;
+  readonly pr: number;
+  readonly fix_round: number;
+  readonly branch: string;
+  readonly base_head_sha?: string;
+  readonly new_head_sha?: string;
+  readonly changed_files: readonly string[];
+  readonly summary: string;
+  readonly test_summary: readonly string[];
+  readonly risk: "low" | "medium" | "high";
+  readonly created_at: string;
+};
+
+export type RepoPolicy = {
+  readonly version: 1;
+  readonly autopilot: {
+    readonly enabled: boolean;
+    readonly trigger_labels: readonly string[];
+    readonly allowed_actors?: readonly string[];
+  };
+  readonly merge: {
+    readonly default_method: "squash" | "merge" | "rebase";
+    readonly auto_merge: {
+      readonly enabled: boolean;
+      readonly allowed_risks: readonly ("low" | "medium" | "high")[];
+      readonly blocked_labels: readonly string[];
+    };
+  };
+  readonly paths: {
+    readonly allow: readonly string[];
+    readonly deny: readonly string[];
+    readonly high_risk: readonly string[];
+  };
+  readonly checks: {
+    readonly required: readonly string[];
+    readonly source: "github_merge_gate" | "policy_required_names" | "branch_protection_read";
+    readonly skipped_counts_as_success?: boolean;
+    readonly neutral_counts_as_success?: boolean;
+  };
+  readonly review: {
+    readonly max_fix_rounds: number;
+    readonly require_plan_review: boolean;
+    readonly require_pr_review: boolean;
+    readonly agent_review_counts_as_human_review: false;
+  };
+};
+
+export type LocalConfig = {
+  readonly version: 1;
+  readonly github?: {
+    readonly api_base_url?: string;
+    readonly auth: {
+      readonly mode: "app";
+      readonly app_id_env: string;
+      readonly private_key_env: string;
+      readonly installation_id_env: string;
+    };
+  };
+  readonly database: { readonly path: string };
+  readonly workspaces: { readonly root: string; readonly cleanup_after_days?: number };
+  readonly repositories: readonly {
+    readonly owner: string;
+    readonly name: string;
+    readonly local_path: string;
+    readonly default_branch: string;
+    readonly policy_file: string;
+    readonly agents?: Record<string, unknown>;
+  }[];
+  readonly agents: {
+    readonly planner: AgentConfig;
+    readonly plan_reviewer: AgentConfig;
+    readonly implementer: AgentConfig;
+    readonly pr_reviewer: AgentConfig;
+    readonly merge_agent: { readonly adapter: "builtin"; readonly mode: "deterministic" };
+  };
+};
+
+type AgentConfig = {
+  readonly adapter: "codex" | "claude" | "custom";
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly mode: "read_only" | "write_worktree";
+  readonly network?: "deny" | "allow" | "restricted";
+};
+
 export type ValidationResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly errors: readonly string[] };
@@ -192,11 +281,262 @@ export function validateImplementationResult(value: unknown): ValidationResult<I
   return errors.length === 0 ? { ok: true, value: value as ImplementationResult } : { ok: false, errors };
 }
 
+export function validateFixResult(value: unknown): ValidationResult<FixResult> {
+  const errors: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, errors: ["fix result must be an object"] };
+  }
+
+  requireConst(value, "schema", "agent-orchestrator.fix-result.v1", errors);
+  requireConst(value, "role", AgentRole.Implementer, errors);
+  requireRunId(value.run_id, "run_id", errors);
+  requirePositiveInteger(value.issue, "issue", errors);
+  requirePositiveInteger(value.pr, "pr", errors);
+  if (!Number.isInteger(value.fix_round) || value.fix_round < 1 || value.fix_round > 10) {
+    errors.push("fix_round must be an integer from 1 to 10");
+  }
+  requireNonEmptyString(value.branch, "branch", errors);
+  if (typeof value.branch === "string" && !/^agent\/issue-[0-9]+-[a-z0-9][a-z0-9-]*$/.test(value.branch)) {
+    errors.push("branch must match agent issue branch format");
+  }
+  if (value.base_head_sha !== undefined && typeof value.base_head_sha !== "string") {
+    errors.push("base_head_sha must be a string");
+  }
+  if (value.new_head_sha !== undefined && typeof value.new_head_sha !== "string") {
+    errors.push("new_head_sha must be a string");
+  }
+  requireStringArray(value.changed_files, "changed_files", errors);
+  requireNonEmptyString(value.summary, "summary", errors);
+  requireStringArray(value.test_summary, "test_summary", errors);
+  requireEnum(value, "risk", ["low", "medium", "high"], errors);
+  requireIsoDate(value.created_at, "created_at", errors);
+
+  return errors.length === 0 ? { ok: true, value: value as FixResult } : { ok: false, errors };
+}
+
+export function validateRepoPolicy(value: unknown): ValidationResult<RepoPolicy> {
+  const errors: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, errors: ["repo policy must be an object"] };
+  }
+
+  requireConst(value, "version", 1, errors);
+  validateAutopilotPolicy(value.autopilot, errors);
+  validateMergePolicy(value.merge, errors);
+  validatePathPolicyContract(value.paths, errors);
+  validateChecksPolicy(value.checks, errors);
+  validateReviewPolicy(value.review, errors);
+
+  return errors.length === 0 ? { ok: true, value: value as RepoPolicy } : { ok: false, errors };
+}
+
+export function validateLocalConfig(value: unknown): ValidationResult<LocalConfig> {
+  const errors: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, errors: ["local config must be an object"] };
+  }
+
+  requireConst(value, "version", 1, errors);
+  if (value.github !== undefined) {
+    validateGitHubConfig(value.github, errors);
+  }
+  validateDatabaseConfig(value.database, errors);
+  validateWorkspaceConfig(value.workspaces, errors);
+  validateRepositoryConfigs(value.repositories, errors);
+  validateAgentConfigs(value.agents, errors);
+
+  return errors.length === 0 ? { ok: true, value: value as LocalConfig } : { ok: false, errors };
+}
+
 export function decideInvalidAgentOutput(retryCount: number, maxRetries: number): InvalidAgentOutputDecision {
   return {
     errorCode: ErrorCode.AgentSchemaInvalid,
     action: retryCount < maxRetries ? "retry" : "block"
   };
+}
+
+function validateGitHubConfig(value: unknown, errors: string[]): void {
+  if (!isRecord(value)) {
+    errors.push("github must be an object");
+    return;
+  }
+  if (value.api_base_url !== undefined) {
+    requireNonEmptyString(value.api_base_url, "github.api_base_url", errors);
+  }
+  if (!isRecord(value.auth)) {
+    errors.push("github.auth must be an object");
+    return;
+  }
+  if (value.auth.mode !== "app") {
+    errors.push("github.auth.mode must be app");
+  }
+  requireNonEmptyString(value.auth.app_id_env, "github.auth.app_id_env", errors);
+  requireNonEmptyString(value.auth.private_key_env, "github.auth.private_key_env", errors);
+  requireNonEmptyString(value.auth.installation_id_env, "github.auth.installation_id_env", errors);
+}
+
+function validateAutopilotPolicy(value: unknown, errors: string[]): void {
+  if (!isRecord(value)) {
+    errors.push("autopilot must be an object");
+    return;
+  }
+  if (typeof value.enabled !== "boolean") {
+    errors.push("autopilot.enabled must be a boolean");
+  }
+  requireStringArray(value.trigger_labels, "autopilot.trigger_labels", errors, { minItems: 1 });
+  if (value.allowed_actors !== undefined) {
+    requireStringArray(value.allowed_actors, "autopilot.allowed_actors", errors);
+  }
+}
+
+function validateMergePolicy(value: unknown, errors: string[]): void {
+  if (!isRecord(value)) {
+    errors.push("merge must be an object");
+    return;
+  }
+  requireEnum(value, "default_method", ["squash", "merge", "rebase"], errors, "merge.default_method");
+  if (!isRecord(value.auto_merge)) {
+    errors.push("merge.auto_merge must be an object");
+    return;
+  }
+  if (typeof value.auto_merge.enabled !== "boolean") {
+    errors.push("merge.auto_merge.enabled must be a boolean");
+  }
+  requireRiskArray(value.auto_merge.allowed_risks, "merge.auto_merge.allowed_risks", errors);
+  requireStringArray(value.auto_merge.blocked_labels, "merge.auto_merge.blocked_labels", errors);
+}
+
+function validatePathPolicyContract(value: unknown, errors: string[]): void {
+  if (!isRecord(value)) {
+    errors.push("paths must be an object");
+    return;
+  }
+  requireStringArray(value.allow, "paths.allow", errors);
+  requireStringArray(value.deny, "paths.deny", errors);
+  requireStringArray(value.high_risk, "paths.high_risk", errors);
+}
+
+function validateChecksPolicy(value: unknown, errors: string[]): void {
+  if (!isRecord(value)) {
+    errors.push("checks must be an object");
+    return;
+  }
+  requireStringArray(value.required, "checks.required", errors);
+  requireEnum(
+    value,
+    "source",
+    ["github_merge_gate", "policy_required_names", "branch_protection_read"],
+    errors,
+    "checks.source"
+  );
+  if (value.skipped_counts_as_success !== undefined && typeof value.skipped_counts_as_success !== "boolean") {
+    errors.push("checks.skipped_counts_as_success must be a boolean");
+  }
+  if (value.neutral_counts_as_success !== undefined && typeof value.neutral_counts_as_success !== "boolean") {
+    errors.push("checks.neutral_counts_as_success must be a boolean");
+  }
+}
+
+function validateReviewPolicy(value: unknown, errors: string[]): void {
+  if (!isRecord(value)) {
+    errors.push("review must be an object");
+    return;
+  }
+  if (!Number.isInteger(value.max_fix_rounds) || value.max_fix_rounds < 0 || value.max_fix_rounds > 10) {
+    errors.push("review.max_fix_rounds must be an integer from 0 to 10");
+  }
+  if (typeof value.require_plan_review !== "boolean") {
+    errors.push("review.require_plan_review must be a boolean");
+  }
+  if (typeof value.require_pr_review !== "boolean") {
+    errors.push("review.require_pr_review must be a boolean");
+  }
+  if (value.agent_review_counts_as_human_review !== false) {
+    errors.push("review.agent_review_counts_as_human_review must be false");
+  }
+}
+
+function validateDatabaseConfig(value: unknown, errors: string[]): void {
+  if (!isRecord(value)) {
+    errors.push("database must be an object");
+    return;
+  }
+  requireNonEmptyString(value.path, "database.path", errors);
+}
+
+function validateWorkspaceConfig(value: unknown, errors: string[]): void {
+  if (!isRecord(value)) {
+    errors.push("workspaces must be an object");
+    return;
+  }
+  requireNonEmptyString(value.root, "workspaces.root", errors);
+  if (
+    value.cleanup_after_days !== undefined &&
+    (!Number.isInteger(value.cleanup_after_days) || value.cleanup_after_days < 1)
+  ) {
+    errors.push("workspaces.cleanup_after_days must be a positive integer");
+  }
+}
+
+function validateRepositoryConfigs(value: unknown, errors: string[]): void {
+  if (!Array.isArray(value) || value.length === 0) {
+    errors.push("repositories must be a non-empty array");
+    return;
+  }
+
+  value.forEach((repo, index) => {
+    if (!isRecord(repo)) {
+      errors.push(`repositories.${index} must be an object`);
+      return;
+    }
+    requireNonEmptyString(repo.owner, `repositories.${index}.owner`, errors);
+    requireNonEmptyString(repo.name, `repositories.${index}.name`, errors);
+    requireNonEmptyString(repo.local_path, `repositories.${index}.local_path`, errors);
+    requireNonEmptyString(repo.default_branch, `repositories.${index}.default_branch`, errors);
+    requireNonEmptyString(repo.policy_file, `repositories.${index}.policy_file`, errors);
+  });
+}
+
+function validateAgentConfigs(value: unknown, errors: string[]): void {
+  if (!isRecord(value)) {
+    errors.push("agents must be an object");
+    return;
+  }
+
+  for (const role of [AgentRole.Planner, AgentRole.PlanReviewer, AgentRole.Implementer, AgentRole.PrReviewer]) {
+    validateAgentConfig(value[role], `agents.${role}`, errors);
+  }
+
+  if (!isRecord(value.merge_agent)) {
+    errors.push("agents.merge_agent must be an object");
+    return;
+  }
+  if (value.merge_agent.adapter !== "builtin") {
+    errors.push("agents.merge_agent.adapter must be builtin");
+  }
+  if (value.merge_agent.mode !== "deterministic") {
+    errors.push("agents.merge_agent.mode must be deterministic");
+  }
+}
+
+function validateAgentConfig(value: unknown, label: string, errors: string[]): void {
+  if (!isRecord(value)) {
+    errors.push(`${label} must be an object`);
+    return;
+  }
+  requireEnum(value, "adapter", ["codex", "claude", "custom"], errors, `${label}.adapter`);
+  requireNonEmptyString(value.command, `${label}.command`, errors);
+  requireStringArray(value.args, `${label}.args`, errors);
+  requireEnum(value, "mode", ["read_only", "write_worktree"], errors, `${label}.mode`);
+  if (value.network !== undefined) {
+    requireEnum(value, "network", ["deny", "allow", "restricted"], errors, `${label}.network`);
+  }
+}
+
+function requireRiskArray(value: unknown, label: string, errors: string[]): void {
+  if (!Array.isArray(value) || !value.every((item) => item === "low" || item === "medium" || item === "high")) {
+    errors.push(`${label} must be a risk array`);
+  }
 }
 
 function validateRepo(value: unknown, errors: string[]): void {

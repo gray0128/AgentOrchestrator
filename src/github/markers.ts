@@ -12,6 +12,11 @@ const markerStart = "<!-- agent-orchestrator:v1";
 const markerEnd = "-->";
 
 export function renderAgentMarker(marker: AgentMarker): string {
+  const validationErrors = validateAgentMarker(marker);
+  if (validationErrors.length > 0) {
+    throw new Error(`invalid agent marker: ${validationErrors.join(", ")}`);
+  }
+
   const lines = [
     markerStart,
     `role: ${marker.role}`,
@@ -89,6 +94,30 @@ function parseMarkerBody(raw: string): AgentMarker | undefined {
     pr,
     head_sha: fields.get("head_sha")
   };
+}
+
+export function validateAgentMarker(marker: AgentMarker): readonly string[] {
+  const errors: string[] = [];
+  if (marker.schema !== "agent-orchestrator:v1") {
+    errors.push("schema must be agent-orchestrator:v1");
+  }
+  if (!isMarkerRole(marker.role)) {
+    errors.push("role must be a known marker role");
+  }
+  if (!Number.isInteger(marker.issue) || marker.issue < 1) {
+    errors.push("issue must be a positive integer");
+  }
+  if (!/^run_[A-Za-z0-9_-]+$/.test(marker.run_id)) {
+    errors.push("run_id must be a run id");
+  }
+  if (marker.pr !== undefined && (!Number.isInteger(marker.pr) || marker.pr < 1)) {
+    errors.push("pr must be a positive integer");
+  }
+  if (marker.head_sha !== undefined && typeof marker.head_sha !== "string") {
+    errors.push("head_sha must be a string");
+  }
+
+  return errors;
 }
 
 function isMarkerRole(value: string | undefined): value is AgentMarker["role"] {

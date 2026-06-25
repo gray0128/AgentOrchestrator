@@ -25,6 +25,7 @@
 | `GITHUB_NOT_FOUND` | No | Yes | Required GitHub object was not found. |
 | `GITHUB_CONFLICT` | No | Maybe | GitHub API conflict; requires re-read. |
 | `GITHUB_RATE_LIMITED` | Yes | No | GitHub rate limit or secondary rate limit. |
+| `GITHUB_AUTH_INVALID` | No | Yes | GitHub App credentials are missing, malformed, forbidden, or failed token exchange. |
 | `LEASE_CONFLICT` | Yes | No | Another worker owns an active lease. |
 | `IDEMPOTENCY_CONFLICT` | No | Yes | Same key was used with different request hash. |
 | `AGENT_PROCESS_FAILED` | Yes | No | Agent process exited unsuccessfully. |

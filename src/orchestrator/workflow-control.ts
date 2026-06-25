@@ -1,6 +1,7 @@
 import { WorkflowState } from "../state/state-machine.ts";
 import { syncStateLabels } from "../state/labels.ts";
 import type { WorkflowState as WorkflowStateValue } from "../state/state-machine.ts";
+import { sanitizeMarkdown } from "../security/redaction.ts";
 
 export type AgentExecutionGateInput = {
   readonly state: WorkflowStateValue;
@@ -59,13 +60,13 @@ export function renderBlockedComment(input: Omit<BlockedHandlingInput, "currentL
 
   return `## Automation Blocked
 
-Reason: ${input.errorCode}
+Reason: ${sanitizeMarkdown(input.errorCode)}
 
-${input.explanation}
+${sanitizeMarkdown(input.explanation)}
 
 Required human action:
 
-- ${input.requiredAction}
+- ${sanitizeMarkdown(input.requiredAction)}
 
 <!-- agent-orchestrator:v1
 role: orchestrator

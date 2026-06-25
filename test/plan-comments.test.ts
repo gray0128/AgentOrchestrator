@@ -6,7 +6,8 @@ import {
   findAgentMarker,
   parseAgentMarkers,
   renderPlanComment,
-  renderPlanReviewComment
+  renderPlanReviewComment,
+  validateAgentMarker
 } from "../src/index.ts";
 import type { PlanResult, ReviewerVerdict } from "../src/index.ts";
 
@@ -53,6 +54,36 @@ test("plan review comment includes a valid review marker that can be found durin
       head_sha: undefined
     }
   ]);
+});
+
+test("artifact rendering redacts secret-looking values and validates markers", () => {
+  const comment = renderPlanComment({
+    ...planResult(),
+    summary: "Use token=supersecretvalue123 in tests",
+    test_plan: ["export GITHUB_TOKEN=ghp_123456789012345678901234567890123456"]
+  });
+
+  assert.doesNotMatch(comment, /supersecretvalue123/);
+  assert.doesNotMatch(comment, /ghp_123456789012345678901234567890123456/);
+  assert.match(comment, /\[REDACTED\]/);
+  assert.deepEqual(
+    validateAgentMarker({
+      schema: "agent-orchestrator:v1",
+      role: "planner",
+      issue: 123,
+      run_id: "run_plan",
+      verdict: "READY_FOR_REVIEW"
+    }),
+    []
+  );
+  assert.ok(
+    validateAgentMarker({
+      schema: "agent-orchestrator:v1",
+      role: "planner",
+      issue: 0,
+      run_id: "bad"
+    }).length > 0
+  );
 });
 
 function planResult(): PlanResult {

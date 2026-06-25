@@ -1,5 +1,14 @@
 {
   "version": 1,
+  "github": {
+    "api_base_url": "https://api.github.com",
+    "auth": {
+      "mode": "app",
+      "app_id_env": "AGENT_ORCHESTRATOR_GITHUB_APP_ID",
+      "private_key_env": "AGENT_ORCHESTRATOR_GITHUB_PRIVATE_KEY",
+      "installation_id_env": "AGENT_ORCHESTRATOR_GITHUB_INSTALLATION_ID"
+    }
+  },
   "database": {
     "path": "./data/orchestrator.sqlite"
   },
@@ -13,7 +22,7 @@
       "name": "example-repo",
       "local_path": "../example-repo",
       "default_branch": "main",
-      "policy_file": ".github/agent-orchestrator.yml"
+      "policy_file": ".github/agent-orchestrator.json"
     }
   ],
   "agents": {

@@ -3,14 +3,19 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "ao": "./src/cli.ts"
+  },
   "engines": {
     "node": ">=26.0.0"
   },
   "scripts": {
     "check": "npm run schema:check && npm run format:check && npm test",
+    "cli": "node --experimental-strip-types src/cli.ts",
     "format": "node tools/format-check.mjs --write",
     "format:check": "node tools/format-check.mjs",
     "schema:check": "node tools/check-schemas.mjs",
+    "smoke:e2e": "node --experimental-strip-types --test test/e2e-smoke.test.ts",
     "test": "node --experimental-strip-types --test test/**/*.test.ts"
   }
 }
