@@ -7,7 +7,7 @@
   "required": ["schema", "role", "run_id", "repo", "issue", "workspace", "policy", "expected_outputs", "created_at"],
   "properties": {
     "schema": { "const": "agent-orchestrator.task-envelope.v1" },
-    "role": { "enum": ["planner", "plan_reviewer", "implementer", "pr_reviewer"] },
+    "role": { "enum": ["planner", "plan_reviewer", "implementer", "pr_reviewer", "triage"] },
     "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]+$" },
     "repo": {
       "type": "object",
@@ -79,6 +79,18 @@
         "allow_secrets": { "type": "boolean", "default": false }
       }
     },
+    "dispatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current_state", "trigger"],
+      "properties": {
+        "current_state": { "type": "string", "minLength": 1 },
+        "trigger": { "enum": ["label", "mention"] },
+        "trigger_comment": { "type": "string" },
+        "pr_number": { "type": "integer", "minimum": 1 },
+        "head_sha": { "type": "string", "minLength": 7 }
+      }
+    },
     "expected_outputs": {
       "type": "object",
       "additionalProperties": false,
@@ -88,7 +100,8 @@
         "commit": { "type": "boolean" },
         "pr_body": { "type": "boolean" },
         "test_summary": { "type": "boolean" },
-        "changed_files": { "type": "boolean" }
+        "changed_files": { "type": "boolean" },
+        "triage": { "type": "boolean" }
       }
     },
     "created_at": { "type": "string", "format": "date-time" }

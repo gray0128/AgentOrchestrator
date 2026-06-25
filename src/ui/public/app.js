@@ -17,6 +17,30 @@ const STATE_OPTIONS = [
   "failed"
 ];
 
+const STATE_LABELS_ZH = {
+  new: "新建",
+  planning: "方案制定中",
+  plan_reviewing: "方案审核中",
+  implementing: "实现中",
+  pr_opened: "PR 已打开",
+  pr_reviewing: "PR 审核中",
+  ci_waiting: "等待 CI",
+  fixing: "修复中",
+  merge_ready: "可合并",
+  merged: "已合并",
+  issue_closed: "Issue 已关闭",
+  paused: "已暂停",
+  blocked: "已阻断",
+  failed: "已失败"
+};
+
+const DELIVERY_STATUS_LABELS = {
+  received: "已接收",
+  ignored: "已忽略",
+  processed: "已处理",
+  failed: "失败"
+};
+
 const state = {
   autoRefresh: true,
   timer: null
@@ -28,6 +52,14 @@ function $(id) {
 
 function pageKind() {
   return document.body.dataset.page ?? "dashboard";
+}
+
+function initNav() {
+  const kind = pageKind();
+  const activeNav = kind === "run-detail" ? "runs" : kind;
+  document.querySelectorAll("nav a[data-nav]").forEach((link) => {
+    link.classList.toggle("active", link.dataset.nav === activeNav);
+  });
 }
 
 async function fetchJson(path) {
@@ -46,11 +78,25 @@ function shortSha(value) {
   return value.length > 10 ? `${value.slice(0, 7)}…` : value;
 }
 
+function truncateId(value, max = 28) {
+  if (!value) {
+    return "—";
+  }
+  if (value.length <= max) {
+    return value;
+  }
+  return `${value.slice(0, max)}…`;
+}
+
 function formatTime(value) {
   if (!value) {
     return "—";
   }
   return new Date(value).toLocaleString("zh-CN", { hour12: false });
+}
+
+function labelZh(runState, labelZhValue) {
+  return labelZhValue || STATE_LABELS_ZH[runState] || runState;
 }
 
 function badgeClass(runState) {
@@ -66,8 +112,40 @@ function badgeClass(runState) {
   return "active";
 }
 
-function renderBadge(runState, labelZh) {
-  return `<span class="badge ${badgeClass(runState)}"><span class="en">${runState}</span><span>${labelZh ?? runState}</span></span>`;
+function deliveryBadgeClass(status) {
+  if (status === "failed") {
+    return "delivery-failed";
+  }
+  if (status === "processed") {
+    return "delivery-processed";
+  }
+  if (status === "received") {
+    return "delivery-received";
+  }
+  return "delivery-ignored";
+}
+
+function renderBadge(runState, labelZhValue) {
+  const zh = labelZh(runState, labelZhValue);
+  return `<span class="badge ${badgeClass(runState)}" title="${runState}">${zh}</span>`;
+}
+
+function renderDeliveryBadge(status) {
+  const label = DELIVERY_STATUS_LABELS[status] ?? status;
+  return `<span class="badge ${deliveryBadgeClass(status)}" title="${status}">${label}</span>`;
+}
+
+function renderEmptyRow(colspan, title, hint) {
+  return `
+    <tr>
+      <td colspan="${colspan}" class="empty-cell">
+        <div class="empty-cell-inner">
+          <span class="empty-cell-title">${title}</span>
+          ${hint ? `<span>${hint}</span>` : ""}
+        </div>
+      </td>
+    </tr>
+  `;
 }
 
 function setStatus(text) {
@@ -105,6 +183,30 @@ function scheduleRefresh(loadFn) {
   }
 }
 
+function renderStateBreakdown(runsByState, totalRuns) {
+  const entries = Object.entries(runsByState).sort((left, right) => right[1] - left[1]);
+  if (entries.length === 0) {
+    return `<li class="empty">暂无运行记录</li>`;
+  }
+  const maxCount = entries[0][1];
+  return entries
+    .map(([runState, count]) => {
+      const width = maxCount > 0 ? Math.round((count / maxCount) * 100) : 0;
+      return `
+        <li>
+          <div class="state-row-header">
+            ${renderBadge(runState, STATE_LABELS_ZH[runState])}
+            <span class="state-row-count">${count}</span>
+          </div>
+          <div class="state-bar" aria-hidden="true">
+            <div class="state-bar-fill" style="width: ${width}%"></div>
+          </div>
+        </li>
+      `;
+    })
+    .join("");
+}
+
 async function loadDashboard() {
   try {
     const stats = await fetchJson("/api/local/v1/stats");
@@ -115,25 +217,24 @@ async function loadDashboard() {
     $("metric-deliveries").textContent = String(stats.recentDeliveryCount);
     $("metric-failed-deliveries").textContent = String(stats.failedDeliveryCount24h);
 
-    const stateList = $("state-breakdown");
-    stateList.innerHTML = Object.entries(stats.runsByState)
-      .sort((left, right) => right[1] - left[1])
-      .map(([runState, count]) => `<li>${renderBadge(runState, "")} <strong>${count}</strong></li>`)
-      .join("");
+    $("state-breakdown").innerHTML = renderStateBreakdown(stats.runsByState, stats.runCount);
 
     const tbody = $("recent-runs");
-    tbody.innerHTML = runs.items
-      .map(
-        (run) => `
+    tbody.innerHTML =
+      runs.items.length === 0
+        ? renderEmptyRow(4, "暂无运行记录", "在 Issue 上添加 agent 标签后将自动出现")
+        : runs.items
+            .map(
+              (run) => `
           <tr>
             <td><a href="/ui/runs/${encodeURIComponent(run.runId)}">${run.repoOwner}/${run.repoName} #${run.issueNumber}</a></td>
             <td>${renderBadge(run.state, run.stateLabelZh)}</td>
             <td class="mono">${shortSha(run.headSha)}</td>
-            <td>${formatTime(run.updatedAt)}</td>
+            <td class="status-line">${formatTime(run.updatedAt)}</td>
           </tr>
         `
-      )
-      .join("");
+            )
+            .join("");
     setStatus(`已更新 ${formatTime(stats.generatedAt)} · 自动刷新 ${state.autoRefresh ? "10 秒" : "已关闭"}`);
   } catch (error) {
     setStatus(error.message);
@@ -150,23 +251,26 @@ async function loadRuns() {
   try {
     const runs = await fetchJson(`/api/local/v1/runs?${query.toString()}`);
     const tbody = $("runs-table");
-    tbody.innerHTML = runs.items
-      .map(
-        (run) => `
+    tbody.innerHTML =
+      runs.items.length === 0
+        ? renderEmptyRow(9, "没有匹配的 Run", stateFilter ? "尝试切换其他状态筛选" : "当前数据库中尚无运行记录")
+        : runs.items
+            .map(
+              (run) => `
           <tr>
-            <td><a href="/ui/runs/${encodeURIComponent(run.runId)}">${run.runId}</a></td>
+            <td class="truncate mono" title="${run.runId}"><a href="/ui/runs/${encodeURIComponent(run.runId)}">${truncateId(run.runId)}</a></td>
             <td>${run.repoOwner}/${run.repoName}</td>
             <td><a href="${run.links.issue}" target="_blank" rel="noreferrer">#${run.issueNumber}</a></td>
             <td>${run.prNumber ? `<a href="${run.links.pullRequest}" target="_blank" rel="noreferrer">#${run.prNumber}</a>` : "—"}</td>
             <td>${renderBadge(run.state, run.stateLabelZh)}</td>
             <td class="mono">${shortSha(run.headSha)}</td>
             <td>${run.fixRound}</td>
-            <td>${run.lastErrorCode ?? "—"}</td>
-            <td>${formatTime(run.updatedAt)}</td>
+            <td class="mono">${run.lastErrorCode ?? "—"}</td>
+            <td class="status-line">${formatTime(run.updatedAt)}</td>
           </tr>
         `
-      )
-      .join("");
+            )
+            .join("");
     setStatus(`共 ${runs.total} 条 · 已更新 ${formatTime(runs.generatedAt)}`);
   } catch (error) {
     setStatus(error.message);
@@ -215,9 +319,13 @@ async function loadRunDetail() {
       <div>创建: ${formatTime(run.created_at)} · 更新: ${formatTime(run.updated_at)}</div>
     `;
 
-    $("timeline").innerHTML = detail.snapshot.transitions
-      .map(
-        (transition) => `
+    const timeline = detail.snapshot.transitions;
+    $("timeline").innerHTML =
+      timeline.length === 0
+        ? `<li class="empty">暂无状态变更记录</li>`
+        : timeline
+            .map(
+              (transition) => `
           <li>
             <div class="event">${transition.fromState} → ${transition.toState}</div>
             <div class="mono">${transition.eventType} · ${shortSha(transition.headSha)}</div>
@@ -225,23 +333,27 @@ async function loadRunDetail() {
             <div class="status-line">${formatTime(transition.createdAt)}</div>
           </li>
         `
-      )
-      .join("");
+            )
+            .join("");
 
-    $("actions-table").innerHTML = detail.snapshot.actions
-      .map(
-        (action) => `
+    const actions = detail.snapshot.actions;
+    $("actions-table").innerHTML =
+      actions.length === 0
+        ? renderEmptyRow(6, "暂无幂等动作", "工作流推进后将记录 GitHub 侧写入操作")
+        : actions
+            .map(
+              (action) => `
           <tr>
             <td class="mono">${action.actionType}</td>
             <td>${action.targetType}</td>
-            <td class="mono">${action.targetId ?? "—"}</td>
+            <td class="mono truncate" title="${action.targetId ?? ""}">${action.targetId ?? "—"}</td>
             <td>${action.status}</td>
             <td class="mono">${action.responseRef ?? "—"}</td>
-            <td>${formatTime(action.updatedAt)}</td>
+            <td class="status-line">${formatTime(action.updatedAt)}</td>
           </tr>
         `
-      )
-      .join("");
+            )
+            .join("");
     setStatus(`已更新 ${formatTime(detail.generatedAt)}`);
   } catch (error) {
     setStatus(error.message);
@@ -257,21 +369,24 @@ async function loadDeliveries() {
   query.set("limit", "100");
   try {
     const deliveries = await fetchJson(`/api/local/v1/deliveries?${query.toString()}`);
-    $("deliveries-table").innerHTML = deliveries.items
-      .map(
-        (delivery) => `
+    $("deliveries-table").innerHTML =
+      deliveries.items.length === 0
+        ? renderEmptyRow(7, "暂无 Webhook 投递", status ? "尝试切换其他状态筛选" : "服务启动后收到的 GitHub Webhook 将显示在此")
+        : deliveries.items
+            .map(
+              (delivery) => `
           <tr>
-            <td class="mono">${delivery.deliveryId}</td>
+            <td class="mono truncate" title="${delivery.deliveryId}">${truncateId(delivery.deliveryId, 24)}</td>
             <td>${delivery.eventName}</td>
             <td>${delivery.action ?? "—"}</td>
             <td>${delivery.repoOwner && delivery.repoName ? `${delivery.repoOwner}/${delivery.repoName}` : "—"}</td>
-            <td>${delivery.status}</td>
-            <td>${delivery.errorCode ?? "—"}</td>
-            <td>${formatTime(delivery.receivedAt)}</td>
+            <td>${renderDeliveryBadge(delivery.status)}</td>
+            <td class="mono">${delivery.errorCode ?? "—"}</td>
+            <td class="status-line">${formatTime(delivery.receivedAt)}</td>
           </tr>
         `
-      )
-      .join("");
+            )
+            .join("");
     setStatus(`共 ${deliveries.total} 条 · 已更新 ${formatTime(deliveries.generatedAt)}`);
   } catch (error) {
     setStatus(error.message);
@@ -282,7 +397,7 @@ function initRunsPage() {
   const select = $("state-filter");
   if (select) {
     select.innerHTML = STATE_OPTIONS.map((value) => {
-      const label = value || "全部状态";
+      const label = value ? (STATE_LABELS_ZH[value] ? `${STATE_LABELS_ZH[value]} (${value})` : value) : "全部状态";
       return `<option value="${value}">${label}</option>`;
     }).join("");
     select.addEventListener("change", () => {
@@ -293,6 +408,7 @@ function initRunsPage() {
 }
 
 function init() {
+  initNav();
   const kind = pageKind();
   if (kind === "dashboard") {
     setupAutoRefresh(loadDashboard);

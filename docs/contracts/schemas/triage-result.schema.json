@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-orchestrator.triage-result.v1",
+  "title": "TriageResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "role", "run_id", "issue", "scope", "next_step", "reason", "created_at"],
+  "properties": {
+    "schema": { "const": "agent-orchestrator.triage-result.v1" },
+    "role": { "const": "triage" },
+    "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]+$" },
+    "issue": { "type": "integer", "minimum": 1 },
+    "scope": { "enum": ["in_scope", "out_of_scope"] },
+    "next_step": {
+      "enum": ["planning", "implementing", "pr_reviewing", "fixing", "ci_waiting", "merge_ready", "blocked", "noop"]
+    },
+    "reason": { "type": "string", "minLength": 1 },
+    "confidence": { "enum": ["high", "medium", "low"] },
+    "filtered_topics": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Non-repository topics detected and excluded from automation."
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

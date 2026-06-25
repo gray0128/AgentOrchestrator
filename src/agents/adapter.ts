@@ -4,8 +4,29 @@ export const AgentRole = {
   Planner: "planner",
   PlanReviewer: "plan_reviewer",
   Implementer: "implementer",
-  PrReviewer: "pr_reviewer"
+  PrReviewer: "pr_reviewer",
+  Triage: "triage"
 } as const;
+
+export type TriageNextStep =
+  | "planning"
+  | "implementing"
+  | "pr_reviewing"
+  | "fixing"
+  | "ci_waiting"
+  | "merge_ready"
+  | "blocked"
+  | "noop";
+
+export type TriageScope = "in_scope" | "out_of_scope";
+
+export type DispatchContext = {
+  readonly current_state: string;
+  readonly trigger: "label" | "mention";
+  readonly trigger_comment?: string;
+  readonly pr_number?: number;
+  readonly head_sha?: string;
+};
 
 export type AgentRole = (typeof AgentRole)[keyof typeof AgentRole];
 
@@ -53,6 +74,7 @@ export type TaskEnvelope = {
     readonly max_fix_rounds: number;
     readonly allow_secrets?: boolean;
   };
+  readonly dispatch?: DispatchContext;
   readonly expected_outputs: {
     readonly plan?: boolean;
     readonly review?: boolean;
@@ -60,7 +82,21 @@ export type TaskEnvelope = {
     readonly pr_body?: boolean;
     readonly test_summary?: boolean;
     readonly changed_files?: boolean;
+    readonly triage?: boolean;
   };
+  readonly created_at: string;
+};
+
+export type TriageResult = {
+  readonly schema: "agent-orchestrator.triage-result.v1";
+  readonly role: typeof AgentRole.Triage;
+  readonly run_id: string;
+  readonly issue: number;
+  readonly scope: TriageScope;
+  readonly next_step: TriageNextStep;
+  readonly reason: string;
+  readonly confidence?: "high" | "medium" | "low";
+  readonly filtered_topics?: readonly string[];
   readonly created_at: string;
 };
 
@@ -123,6 +159,7 @@ export type AgentResultByRole = {
   readonly [AgentRole.PlanReviewer]: ReviewerVerdict;
   readonly [AgentRole.Implementer]: ImplementationResult;
   readonly [AgentRole.PrReviewer]: ReviewerVerdict;
+  readonly [AgentRole.Triage]: TriageResult;
 };
 
 export type AgentProcessMetadata = {

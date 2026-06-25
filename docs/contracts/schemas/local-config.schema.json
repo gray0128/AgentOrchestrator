@@ -69,6 +69,7 @@
         "plan_reviewer": { "$ref": "#/$defs/agent" },
         "implementer": { "$ref": "#/$defs/agent" },
         "pr_reviewer": { "$ref": "#/$defs/agent" },
+        "triage": { "$ref": "#/$defs/agent" },
         "merge_agent": {
           "type": "object",
           "additionalProperties": false,

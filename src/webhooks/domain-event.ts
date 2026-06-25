@@ -1,5 +1,8 @@
+import { isPullRequestIssue, resolveLinkedIssueNumber } from "./comment-dispatch.ts";
+
 export const DomainEventType = {
   IssueAutopilotRequested: "issue.autopilot_requested",
+  IssueCommentDispatchRequested: "issue.comment_dispatch_requested",
   ControlPause: "control.pause",
   ControlResume: "control.resume",
   ControlNoMerge: "control.no_merge",
@@ -42,10 +45,17 @@ type GitHubWebhookPayload = {
     readonly name?: string;
     readonly owner?: { readonly login?: string; readonly name?: string };
   };
-  readonly issue?: { readonly number?: number };
+  readonly issue?: {
+    readonly number?: number;
+    readonly body?: string;
+    readonly labels?: readonly { readonly name?: string }[];
+    readonly pull_request?: Record<string, unknown>;
+  };
+  readonly comment?: { readonly body?: string };
   readonly pull_request?: {
     readonly number?: number;
-    readonly head?: { readonly sha?: string };
+    readonly body?: string;
+    readonly head?: { readonly ref?: string; readonly sha?: string };
   };
   readonly check_run?: {
     readonly conclusion?: string | null;
@@ -72,6 +82,14 @@ export function normalizeGitHubWebhook(input: NormalizeGitHubWebhookInput): Doma
 
   if (input.eventName === "issues") {
     return normalizeIssueEvent(input.payload, base);
+  }
+
+  if (input.eventName === "issue_comment") {
+    return normalizeIssueCommentEvent(input.payload, base);
+  }
+
+  if (input.eventName === "pull_request_review_comment") {
+    return normalizePullRequestReviewCommentEvent(input.payload, base);
   }
 
   if (input.eventName === "pull_request") {
@@ -110,6 +128,89 @@ function normalizeIssueEvent(
 
   return undefined;
 }
+
+function normalizeIssueCommentEvent(
+  payload: GitHubWebhookPayload,
+  base: Omit<DomainEvent, "event_type">
+): DomainEvent | undefined {
+  if (payload.action !== "created") {
+    return undefined;
+  }
+  const body = payload.comment?.body;
+  if (!body || !mentionsDispatchTrigger(body)) {
+    return undefined;
+  }
+
+  if (isPullRequestIssue(payload.issue)) {
+    const pr = payload.issue?.number;
+    const linkedIssue = resolveLinkedIssueNumber({
+      body: payload.issue?.body,
+      headRef: payload.pull_request?.head?.ref
+    });
+    if (!pr || !linkedIssue) {
+      return undefined;
+    }
+    return {
+      ...base,
+      event_type: DomainEventType.IssueCommentDispatchRequested,
+      issue: linkedIssue,
+      pr
+    };
+  }
+
+  const issue = payload.issue?.number;
+  if (!issue || !issueHasAutopilotLabel(payload.issue)) {
+    return undefined;
+  }
+
+  return {
+    ...base,
+    event_type: DomainEventType.IssueCommentDispatchRequested,
+    issue
+  };
+}
+
+function normalizePullRequestReviewCommentEvent(
+  payload: GitHubWebhookPayload,
+  base: Omit<DomainEvent, "event_type">
+): DomainEvent | undefined {
+  if (payload.action !== "created") {
+    return undefined;
+  }
+  const body = payload.comment?.body;
+  const pr = payload.pull_request?.number;
+  if (!body || !pr || !mentionsDispatchTrigger(body)) {
+    return undefined;
+  }
+
+  const linkedIssue = resolveLinkedIssueNumber({
+    body: payload.pull_request?.body,
+    headRef: payload.pull_request?.head?.ref
+  });
+  if (!linkedIssue) {
+    return undefined;
+  }
+
+  return {
+    ...base,
+    event_type: DomainEventType.IssueCommentDispatchRequested,
+    issue: linkedIssue,
+    pr,
+    head_sha: payload.pull_request?.head?.sha
+  };
+}
+
+export function issueHasAutopilotLabel(issue: GitHubWebhookPayload["issue"]): boolean {
+  const labels = issue?.labels ?? [];
+  return labels.some((label) => label.name === "agent:autopilot");
+}
+
+export function mentionsDispatchTrigger(body: string, triggers: readonly string[] = defaultMentionTriggers): boolean {
+  const normalized = body.toLowerCase();
+  return triggers.some((trigger) => normalized.includes(`@${trigger.toLowerCase()}`));
+}
+
+const defaultMentionTriggers = ["agentorchestratorifify"];
 
 function normalizePullRequestEvent(
   payload: GitHubWebhookPayload,

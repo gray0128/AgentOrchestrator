@@ -1,6 +1,6 @@
 import { ErrorCode } from "../errors.ts";
 import { AgentRole } from "../agents/adapter.ts";
-import type { ImplementationResult, PlanResult, ReviewerVerdict, TaskEnvelope } from "../agents/adapter.ts";
+import type { ImplementationResult, PlanResult, ReviewerVerdict, TaskEnvelope, TriageResult } from "../agents/adapter.ts";
 
 export type FixResult = {
   readonly schema: "agent-orchestrator.fix-result.v1";
@@ -24,6 +24,7 @@ export type RepoPolicy = {
   readonly autopilot: {
     readonly enabled: boolean;
     readonly trigger_labels: readonly string[];
+    readonly mention_triggers?: readonly string[];
     readonly allowed_actors?: readonly string[];
   };
   readonly merge: {
@@ -80,6 +81,7 @@ export type LocalConfig = {
     readonly plan_reviewer: AgentConfig;
     readonly implementer: AgentConfig;
     readonly pr_reviewer: AgentConfig;
+    readonly triage?: AgentConfig;
     readonly merge_agent: { readonly adapter: "builtin"; readonly mode: "deterministic" };
   };
   readonly agent_routing?: AgentRoutingConfig;
@@ -295,6 +297,35 @@ export function validateImplementationResult(value: unknown): ValidationResult<I
   return errors.length === 0 ? { ok: true, value: value as ImplementationResult } : { ok: false, errors };
 }
 
+export function validateTriageResult(value: unknown): ValidationResult<TriageResult> {
+  const errors: string[] = [];
+  if (!isRecord(value)) {
+    return { ok: false, errors: ["triage result must be an object"] };
+  }
+
+  requireConst(value, "schema", "agent-orchestrator.triage-result.v1", errors);
+  requireConst(value, "role", AgentRole.Triage, errors);
+  requireRunId(value.run_id, "run_id", errors);
+  requirePositiveInteger(value.issue, "issue", errors);
+  requireEnum(value, "scope", ["in_scope", "out_of_scope"], errors);
+  requireEnum(
+    value,
+    "next_step",
+    ["planning", "implementing", "pr_reviewing", "fixing", "ci_waiting", "merge_ready", "blocked", "noop"],
+    errors
+  );
+  requireNonEmptyString(value.reason, "reason", errors);
+  if (value.confidence !== undefined) {
+    requireEnum(value, "confidence", ["high", "medium", "low"], errors);
+  }
+  if (value.filtered_topics !== undefined) {
+    requireStringArray(value.filtered_topics, "filtered_topics", errors);
+  }
+  requireIsoDate(value.created_at, "created_at", errors);
+
+  return errors.length === 0 ? { ok: true, value: value as TriageResult } : { ok: false, errors };
+}
+
 export function validateFixResult(value: unknown): ValidationResult<FixResult> {
   const errors: string[] = [];
   if (!isRecord(value)) {
@@ -401,6 +432,9 @@ function validateAutopilotPolicy(value: unknown, errors: string[]): void {
     errors.push("autopilot.enabled must be a boolean");
   }
   requireStringArray(value.trigger_labels, "autopilot.trigger_labels", errors, { minItems: 1 });
+  if (value.mention_triggers !== undefined) {
+    requireStringArray(value.mention_triggers, "autopilot.mention_triggers", errors);
+  }
   if (value.allowed_actors !== undefined) {
     requireStringArray(value.allowed_actors, "autopilot.allowed_actors", errors);
   }
@@ -528,6 +562,9 @@ function validateAgentConfigs(value: unknown, errors: string[]): void {
 
   for (const role of [AgentRole.Planner, AgentRole.PlanReviewer, AgentRole.Implementer, AgentRole.PrReviewer]) {
     validateAgentConfig(value[role], `agents.${role}`, errors);
+  }
+  if (value.triage !== undefined) {
+    validateAgentConfig(value.triage, "agents.triage", errors);
   }
 
   if (!isRecord(value.merge_agent)) {

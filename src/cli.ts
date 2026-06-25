@@ -34,15 +34,16 @@ import {
 import { FakeGitHubApiAdapter } from "./github/fake-github-api.ts";
 import type { GitHubApiAdapter } from "./github/api.ts";
 import { GitHubRestApiAdapter } from "./github/rest-github-api.ts";
-import { runIssueLifecycle } from "./orchestrator/runtime-lifecycle.ts";
+import { buildDispatchInput, dispatchIssueWork } from "./orchestrator/issue-dispatch.ts";
+import type { RuntimeLifecycleAgentsWithTriage } from "./orchestrator/issue-dispatch.ts";
 import type {
   RunIssueLifecycleInput,
-  RuntimeLifecycleAgents,
   RuntimeLifecycleIssue,
   RuntimeLifecycleRepo,
   RuntimeLifecycleWorkspace,
 } from "./orchestrator/runtime-lifecycle.ts";
 import { advanceWebhookEvent } from "./orchestrator/webhook-runtime.ts";
+import { shouldDiscardActor } from "./policy/actor-gate.ts";
 import { loadRepoPolicy } from "./policy/repo-policy-loader.ts";
 import type { LoadedRepoPolicy } from "./policy/repo-policy-loader.ts";
 import { buildReconciliationDryRunReport } from "./reconciliation/dry-run.ts";
@@ -61,7 +62,7 @@ import {
   InMemoryDeliveryStore,
   recordDeliveryOnce,
 } from "./webhooks/delivery-deduper.ts";
-import { normalizeGitHubWebhook } from "./webhooks/domain-event.ts";
+import { DomainEventType, mentionsDispatchTrigger, normalizeGitHubWebhook } from "./webhooks/domain-event.ts";
 import type { DomainEvent } from "./webhooks/domain-event.ts";
 import {
   createSignature,
@@ -96,7 +97,7 @@ export type ServeRuntimeOptions = {
 };
 
 export type ServeLifecycleOptions = {
-  readonly agents: RuntimeLifecycleAgents;
+  readonly agents: RuntimeLifecycleAgentsWithTriage;
   readonly repositories: readonly ServeLifecycleRepository[];
 };
 
@@ -868,13 +869,14 @@ function buildServeRuntimeDependencies(
   };
 }
 
-function buildProcessAgents(config: LocalConfig): RuntimeLifecycleAgents {
+function buildProcessAgents(config: LocalConfig): RuntimeLifecycleAgentsWithTriage {
   return {
     planner: buildRoleAgent(config, AgentRole.Planner),
     planReviewer: buildRoleAgent(config, AgentRole.PlanReviewer),
     implementer: buildRoleAgent(config, AgentRole.Implementer),
     prReviewer: buildRoleAgent(config, AgentRole.PrReviewer),
     prReviewers: buildRoleAgentPool(config, AgentRole.PrReviewer),
+    triage: config.agents.triage ? buildProcessAgent(AgentRole.Triage, config.agents.triage) : undefined,
   };
 }
 
@@ -947,6 +949,7 @@ function checkAgentCommands(config: LocalConfig): readonly {
     { role: AgentRole.PlanReviewer, config: config.agents.plan_reviewer },
     { role: AgentRole.Implementer, config: config.agents.implementer },
     { role: AgentRole.PrReviewer, config: config.agents.pr_reviewer },
+    ...(config.agents.triage ? [{ role: AgentRole.Triage, config: config.agents.triage }] : []),
   ].map((agent) => ({
     role: agent.role,
     command: agent.config.command,
@@ -1147,9 +1150,24 @@ async function handleWebhookRequest(input: {
       payload: parsedPayload,
       receivedAt: new Date(),
     });
-    const lifecycleInput =
+    if (
+      domainEvent &&
+      input.lifecycle &&
+      isActorGatedDomainEvent(domainEvent) &&
+      isActorDiscardedByPolicy(domainEvent, input.lifecycle.repositories)
+    ) {
+      writeJson(input.response, 202, {
+        ok: true,
+        ignored: true,
+        reason: "ACTOR_NOT_ALLOWED",
+        actor: domainEvent.actor,
+        domainEvent,
+      });
+      return;
+    }
+    const dispatchContext =
       input.lifecycle && domainEvent
-        ? buildLifecycleInput(
+        ? buildDispatchContext(
             input.lifecycle,
             domainEvent,
             parsedPayload,
@@ -1158,8 +1176,15 @@ async function handleWebhookRequest(input: {
             input.policySummary,
           )
         : undefined;
-    const advancement = lifecycleInput
-      ? await runIssueLifecycle(lifecycleInput)
+    const advancement = dispatchContext
+      ? await dispatchIssueWork(
+          buildDispatchInput(
+            dispatchContext.lifecycleInput,
+            input.lifecycle!.agents,
+            dispatchContext.trigger,
+            dispatchContext.triggerComment,
+          ),
+        )
       : await advanceWebhookEvent({
           database: input.database,
           event: domainEvent,
@@ -1187,17 +1212,51 @@ async function handleWebhookRequest(input: {
   }
 }
 
-function buildLifecycleInput(
+function isActorGatedDomainEvent(event: DomainEvent): boolean {
+  return (
+    event.event_type === DomainEventType.IssueAutopilotRequested ||
+    event.event_type === DomainEventType.IssueCommentDispatchRequested
+  );
+}
+
+function isActorDiscardedByPolicy(
+  event: DomainEvent,
+  repositories: readonly ServeLifecycleRepository[],
+): boolean {
+  const repository = repositories.find(
+    (candidate) =>
+      candidate.repo.owner === event.repo.owner && candidate.repo.name === event.repo.name,
+  );
+  if (!repository) {
+    return false;
+  }
+  return shouldDiscardActor(event.actor, repository.policy.autopilot);
+}
+
+function buildDispatchContext(
   lifecycle: ServeLifecycleOptions,
   event: DomainEvent,
   payload: unknown,
   database: StateDatabase,
   github: GitHubApiAdapter,
   fallbackPolicySummary: string,
-): RunIssueLifecycleInput | undefined {
-  if (event.event_type !== "issue.autopilot_requested" || !event.issue) {
+):
+  | {
+      readonly lifecycleInput: RunIssueLifecycleInput;
+      readonly trigger: "label" | "mention";
+      readonly triggerComment?: string;
+    }
+  | undefined {
+  if (!event.issue) {
     return undefined;
   }
+  if (
+    event.event_type !== DomainEventType.IssueAutopilotRequested &&
+    event.event_type !== DomainEventType.IssueCommentDispatchRequested
+  ) {
+    return undefined;
+  }
+
   const repository = lifecycle.repositories.find(
     (candidate) =>
       candidate.repo.owner === event.repo.owner &&
@@ -1210,7 +1269,7 @@ function buildLifecycleInput(
   }
 
   const issue = buildIssueContext(event, payload);
-  return {
+  const lifecycleInput: RunIssueLifecycleInput = {
     database,
     github,
     agents: lifecycle.agents,
@@ -1220,6 +1279,27 @@ function buildLifecycleInput(
     workspace: buildWorkspaceContext(repository, issue),
     policy: repository.policy,
     policySummary: `${fallbackPolicySummary}: ${repository.policyPath}`,
+  };
+
+  if (event.event_type === DomainEventType.IssueCommentDispatchRequested) {
+    const commentBody =
+      isRecord(payload) && isRecord(payload.comment) && typeof payload.comment.body === "string"
+        ? payload.comment.body
+        : "";
+    const mentionTriggers = repository.policy.autopilot.mention_triggers ?? ["AgentOrchestratorIfify"];
+    if (!mentionsDispatchTrigger(commentBody, mentionTriggers)) {
+      return undefined;
+    }
+    return {
+      lifecycleInput,
+      trigger: "mention",
+      triggerComment: commentBody,
+    };
+  }
+
+  return {
+    lifecycleInput,
+    trigger: "label",
   };
 }
 

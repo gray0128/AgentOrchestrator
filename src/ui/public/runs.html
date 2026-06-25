@@ -3,16 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Runs · Agent Orchestrator</title>
+    <title>运行记录 · Agent Orchestrator</title>
     <link rel="stylesheet" href="/ui/styles.css" />
   </head>
   <body data-page="runs">
     <header>
-      <h1>Workflow Runs</h1>
+      <h1>运行记录</h1>
       <nav>
-        <a href="/ui/">总览</a>
-        <a href="/ui/runs">Runs</a>
-        <a href="/ui/deliveries">Deliveries</a>
+        <a href="/ui/" data-nav="dashboard">总览</a>
+        <a href="/ui/runs" data-nav="runs">Runs</a>
+        <a href="/ui/deliveries" data-nav="deliveries">Deliveries</a>
       </nav>
     </header>
     <main>
@@ -22,25 +22,27 @@
           <select id="state-filter"></select>
         </label>
         <label><input id="auto-refresh" type="checkbox" checked /> 每 10 秒自动刷新</label>
-        <button id="refresh-now" type="button">立即刷新</button>
+        <button id="refresh-now" class="primary" type="button">立即刷新</button>
         <span id="status-line" class="status-line"></span>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Run ID</th>
-            <th>仓库</th>
-            <th>Issue</th>
-            <th>PR</th>
-            <th>状态</th>
-            <th>Head SHA</th>
-            <th>Fix Round</th>
-            <th>错误码</th>
-            <th>更新时间</th>
-          </tr>
-        </thead>
-        <tbody id="runs-table"></tbody>
-      </table>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Run ID</th>
+              <th>仓库</th>
+              <th>Issue</th>
+              <th>PR</th>
+              <th>状态</th>
+              <th>Head SHA</th>
+              <th>Fix Round</th>
+              <th>错误码</th>
+              <th>更新时间</th>
+            </tr>
+          </thead>
+          <tbody id="runs-table"></tbody>
+        </table>
+      </div>
     </main>
     <script src="/ui/app.js"></script>
   </body>

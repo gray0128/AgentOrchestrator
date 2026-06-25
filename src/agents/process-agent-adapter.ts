@@ -4,7 +4,8 @@ import {
   validateImplementationResult,
   validatePlanResult,
   validatePrReviewerVerdict,
-  validateReviewerVerdict
+  validateReviewerVerdict,
+  validateTriageResult
 } from "../contracts/validation.ts";
 import { ErrorCode } from "../errors.ts";
 import { sanitizeMarkdown } from "../security/redaction.ts";
@@ -121,6 +122,9 @@ function validateAgentResult<Role extends AgentRoleValue>(
       ? validatePrReviewerVerdict(value, envelope.pr.head_sha)
       : { ok: false as const, errors: ["pr context is required for pr_reviewer"] };
     return validateRoleResult(role, value, result);
+  }
+  if (role === AgentRole.Triage) {
+    return validateRoleResult(role, value, validateTriageResult(value));
   }
 
   const result = validateReviewerVerdict(value);

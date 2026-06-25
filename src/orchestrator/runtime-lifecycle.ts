@@ -2,7 +2,14 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { AgentRole } from "../agents/adapter.ts";
-import type { AgentAdapter, ImplementationResult, PlanResult, ReviewerVerdict, TaskEnvelope } from "../agents/adapter.ts";
+import type {
+  AgentAdapter,
+  ImplementationResult,
+  PlanResult,
+  ReviewerVerdict,
+  TaskEnvelope,
+  TriageNextStep
+} from "../agents/adapter.ts";
 import type { RepoPolicy } from "../contracts/validation.ts";
 import type { GitHubApiAdapter } from "../github/api.ts";
 import { renderAgentMarker } from "../github/markers.ts";
@@ -14,9 +21,9 @@ import type { DomainEvent } from "../webhooks/domain-event.ts";
 import { renderFinalSummary } from "./closeout.ts";
 import { evaluateMergeGate } from "./merge-gate.ts";
 import { renderPlanComment, renderPlanReviewComment } from "./plan-comments.ts";
-import { aggregateChecks, mapPrReviewVerdictToEvent } from "./pr-gate.ts";
+import { aggregateChecks, decideFixLoop, mapPrReviewVerdictToEvent } from "./pr-gate.ts";
 import { renderPullRequestBody } from "./pr-body.ts";
-import { advanceWebhookEvent } from "./webhook-runtime.ts";
+import { advanceWebhookEvent, createIssueRunId } from "./webhook-runtime.ts";
 
 export type RuntimeLifecycleAgents = {
   readonly planner: AgentAdapter<typeof AgentRole.Planner>;
@@ -321,6 +328,40 @@ async function runRequiredPrReviews(input: {
       input.input.workspace.path
     );
     const prReviewEvent = mapPrReviewVerdictToEvent(prReview, input.headSha);
+    if (prReviewEvent === WorkflowEvent.AgentPrReviewChangesRequested) {
+      const snapshot = getWorkflowRunSnapshot(input.input.database, { runId: input.runId });
+      const fixDecision = decideFixLoop({
+        currentState: WorkflowState.PrReviewing,
+        currentFixRound: snapshot?.run.fix_round ?? 0,
+        maxFixRounds: input.input.policy.review.max_fix_rounds,
+        trigger: WorkflowEvent.AgentPrReviewChangesRequested
+      });
+      if (fixDecision.nextState === WorkflowState.Failed) {
+        throw new Error("PR review requested changes and fix rounds are exhausted");
+      }
+      transition(
+        input.input.database,
+        input.runId,
+        WorkflowState.PrReviewing,
+        WorkflowState.Fixing,
+        input.headSha,
+        WorkflowEvent.AgentPrReviewChangesRequested,
+        input.now
+      );
+      throw new Error(`PR reviewer ${index + 1} requested changes; run moved to fixing`);
+    }
+    if (prReviewEvent === WorkflowEvent.AgentPrReviewBlocked) {
+      transition(
+        input.input.database,
+        input.runId,
+        WorkflowState.PrReviewing,
+        WorkflowState.Blocked,
+        input.headSha,
+        WorkflowEvent.AgentPrReviewBlocked,
+        input.now
+      );
+      throw new Error(`PR reviewer ${index + 1} blocked the run`);
+    }
     if (prReviewEvent !== WorkflowEvent.AgentPrReviewApproved) {
       throw new Error(`PR reviewer ${index + 1} did not approve current head`);
     }
@@ -495,4 +536,247 @@ function readChangedFile(workspacePath: string, filePath: string): string {
 function extractPrNumber(responseRef: string): number | undefined {
   const match = responseRef.match(/(?:pull\/|pr:)([0-9]+)/);
   return match ? Number(match[1]) : undefined;
+}
+
+export async function runIssueLifecycleFromStep(
+  input: RunIssueLifecycleInput,
+  startStep: TriageNextStep,
+  existingRunId?: string
+): Promise<RunIssueLifecycleResult> {
+  if (startStep === "noop" || startStep === "blocked") {
+    throw new Error(`lifecycle cannot execute step ${startStep}`);
+  }
+  if (startStep === "planning") {
+    return runIssueLifecycle(input);
+  }
+
+  const now = input.now ?? new Date();
+  const runId = existingRunId ?? createIssueRunId(input.event);
+  const snapshot = getWorkflowRunSnapshot(input.database, { runId });
+  if (!snapshot) {
+    throw new Error(`workflow run missing for resume: ${runId}`);
+  }
+  const pr = snapshot.run.pr_number;
+  const headSha = snapshot.run.head_sha;
+  if (!pr || !headSha) {
+    throw new Error(`workflow run ${runId} is missing PR binding for resume`);
+  }
+
+  const stubPlanReview: ReviewerVerdict = {
+    schema: "agent-orchestrator.reviewer-verdict.v1",
+    role: AgentRole.PlanReviewer,
+    run_id: runId,
+    issue: input.issue.number,
+    verdict: "APPROVED",
+    risk: "low",
+    summary: "Resume path assumes prior plan review approval.",
+    blocking_findings: [],
+    required_tests: input.policy.checks.required,
+    created_at: now.toISOString()
+  };
+  const stubImplementation: ImplementationResult = {
+    schema: "agent-orchestrator.implementation-result.v1",
+    role: AgentRole.Implementer,
+    run_id: runId,
+    issue: input.issue.number,
+    branch: input.workspace.branch,
+    changed_files: [],
+    summary: "Resume path uses existing PR head.",
+    test_summary: input.policy.checks.required,
+    risk: "low",
+    pr_body_fields: {
+      summary: "Resume path uses existing PR head.",
+      tests: input.policy.checks.required,
+      risk: "low"
+    },
+    created_at: now.toISOString()
+  };
+
+  if (startStep === "pr_reviewing" || startStep === "fixing" || startStep === "implementing") {
+    const requiredPrApprovals = input.policy.review.required_pr_approvals ?? (input.policy.review.require_pr_review ? 1 : 0);
+    const prReviews = await runRequiredPrReviews({
+      input,
+      runId,
+      pr,
+      headSha,
+      requiredPrApprovals,
+      now
+    });
+    safeTransition(input.database, runId, snapshot.run.state, WorkflowState.CiWaiting, headSha, WorkflowEvent.AgentPrReviewApproved, now);
+    return finishCiMergeAndCloseout(input, runId, pr, headSha, stubPlanReview, prReviews, stubImplementation, now);
+  }
+
+  if (startStep === "ci_waiting") {
+    safeTransition(input.database, runId, snapshot.run.state, WorkflowState.CiWaiting, headSha, "checks.pending", now);
+    return finishCiMergeAndCloseout(input, runId, pr, headSha, stubPlanReview, [], stubImplementation, now);
+  }
+
+  if (startStep === "merge_ready") {
+    return finishMergeAndCloseout(input, runId, pr, headSha, stubPlanReview, [], stubImplementation, now);
+  }
+
+  throw new Error(`unsupported resume step: ${startStep}`);
+}
+
+function safeTransition(
+  database: StateDatabase,
+  runId: string,
+  expectedState: string,
+  nextState: string,
+  headSha: string | null,
+  eventType: string,
+  now: Date
+): void {
+  const updated = casUpdateRunState(database, {
+    runId,
+    expectedState,
+    expectedHeadSha: headSha,
+    nextState,
+    nextHeadSha: headSha,
+    idempotencyKey: `${runId}:transition:${eventType}:${nextState}:${now.getTime()}`,
+    eventType,
+    reason: "Resume lifecycle progression.",
+    now
+  });
+  if (!updated) {
+    const snapshot = getWorkflowRunSnapshot(database, { runId });
+    if (snapshot?.run.state !== nextState) {
+      throw new Error(`resume transition failed: ${expectedState} -> ${nextState}`);
+    }
+  }
+}
+
+async function finishCiMergeAndCloseout(
+  input: RunIssueLifecycleInput,
+  runId: string,
+  pr: number,
+  headSha: string,
+  planReview: ReviewerVerdict,
+  prReviews: readonly ReviewerVerdict[],
+  implementation: ImplementationResult,
+  now: Date
+): Promise<RunIssueLifecycleResult> {
+  const checks = await input.github.readCheckSummary({
+    repo: input.event.repo,
+    pr,
+    headSha,
+    requiredChecks: input.policy.checks.required
+  });
+  const checkAggregation = aggregateChecks({
+    currentHeadSha: headSha,
+    requiredChecks: input.policy.checks.required,
+    skippedCountsAsSuccess: input.policy.checks.skipped_counts_as_success,
+    neutralCountsAsSuccess: input.policy.checks.neutral_counts_as_success,
+    checks: checks.checks.map((check) => ({ name: check.name, headSha, conclusion: check.conclusion }))
+  });
+  if (checkAggregation.event !== WorkflowEvent.ChecksSucceeded) {
+    throw new Error("required checks did not succeed");
+  }
+  const beforeMerge = getWorkflowRunSnapshot(input.database, { runId });
+  safeTransition(
+    input.database,
+    runId,
+    beforeMerge?.run.state ?? WorkflowState.CiWaiting,
+    WorkflowState.MergeReady,
+    headSha,
+    WorkflowEvent.ChecksSucceeded,
+    now
+  );
+  return finishMergeAndCloseout(input, runId, pr, headSha, planReview, prReviews, implementation, now);
+}
+
+async function finishMergeAndCloseout(
+  input: RunIssueLifecycleInput,
+  runId: string,
+  pr: number,
+  headSha: string,
+  planReview: ReviewerVerdict,
+  prReviews: readonly ReviewerVerdict[],
+  implementation: ImplementationResult,
+  now: Date
+): Promise<RunIssueLifecycleResult> {
+  const requiredPrApprovals = input.policy.review.required_pr_approvals ?? (input.policy.review.require_pr_review ? 1 : 0);
+  const mergeDecision = evaluateMergeGate({
+    runId,
+    issue: input.issue.number,
+    pr,
+    currentHeadSha: headSha,
+    labels: input.issue.labels,
+    risk: implementation.risk,
+    allowedRisks: input.policy.merge.auto_merge.allowed_risks,
+    blockedLabels: input.policy.merge.auto_merge.blocked_labels,
+    planReviewCurrent: planReview.verdict === "APPROVED",
+    prReviewHeadSha: prReviews[0]?.head_sha ?? headSha,
+    approvedPrReviewCount: prReviews.length,
+    requiredPrApprovals,
+    checksSucceeded: true,
+    githubMergeable: true,
+    mergeMethod: input.policy.merge.default_method,
+    now
+  });
+  if (mergeDecision.decision !== "MERGE_ALLOWED" || !mergeDecision.merge_method) {
+    throw new Error(`merge gate rejected: ${mergeDecision.reasons.join(", ")}`);
+  }
+  const merge = await input.github.mergePullRequest({
+    repo: input.event.repo,
+    pr,
+    expectedHeadSha: headSha,
+    method: mergeDecision.merge_method,
+    idempotencyKey: `${runId}:merge:pull-request`,
+    requestHash: createRequestHash({ runId, mergeDecision })
+  });
+  const beforeMerged = getWorkflowRunSnapshot(input.database, { runId });
+  safeTransition(
+    input.database,
+    runId,
+    beforeMerged?.run.state ?? WorkflowState.MergeReady,
+    WorkflowState.Merged,
+    headSha,
+    WorkflowEvent.MergeCompleted,
+    now
+  );
+
+  await input.github.deleteBranch({
+    repo: input.event.repo,
+    branch: implementation.branch,
+    afterMergeSha: merge.mergeSha,
+    idempotencyKey: `${runId}:merge:delete-branch`,
+    requestHash: createRequestHash({ runId, branch: implementation.branch, mergeSha: merge.mergeSha })
+  });
+  const finalSummary = renderFinalSummary({
+    runId,
+    issue: input.issue.number,
+    pr,
+    headSha,
+    mergeSha: merge.mergeSha,
+    tests: input.policy.checks.required.join(", "),
+    risk: implementation.risk
+  });
+  await input.github.createOrUpdateIssueComment({
+    repo: input.event.repo,
+    issue: input.issue.number,
+    body: finalSummary,
+    idempotencyKey: `${runId}:merge:final-summary`,
+    requestHash: createRequestHash({ runId, finalSummary })
+  });
+  await input.github.closeIssue({
+    repo: input.event.repo,
+    issue: input.issue.number,
+    idempotencyKey: `${runId}:merge:close-issue`,
+    requestHash: createRequestHash({ runId, issue: input.issue.number })
+  });
+  transition(input.database, runId, WorkflowState.Merged, WorkflowState.IssueClosed, headSha, WorkflowEvent.IssueCloseoutCompleted, now);
+
+  const resultSnapshot = getWorkflowRunSnapshot(input.database, { runId });
+  if (!resultSnapshot) {
+    throw new Error(`run missing after closeout: ${runId}`);
+  }
+  return {
+    runId,
+    issue: input.issue.number,
+    pr,
+    headSha,
+    mergeSha: merge.mergeSha,
+    snapshot: resultSnapshot
+  };
 }

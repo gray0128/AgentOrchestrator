@@ -14,6 +14,7 @@
       "properties": {
         "enabled": { "type": "boolean" },
         "trigger_labels": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "mention_triggers": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "allowed_actors": { "type": "array", "items": { "type": "string" } }
       }
     },

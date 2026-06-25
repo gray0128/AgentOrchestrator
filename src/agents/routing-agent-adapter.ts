@@ -56,12 +56,17 @@ const failureMetadata: AgentProcessMetadata = {
   durationMs: 0
 };
 
-export function roleConfigKey(role: AgentRoleValue): "planner" | "plan_reviewer" | "implementer" | "pr_reviewer" {
+export function roleConfigKey(
+  role: AgentRoleValue
+): "planner" | "plan_reviewer" | "implementer" | "pr_reviewer" | "triage" {
   if (role === AgentRole.PlanReviewer) {
     return "plan_reviewer";
   }
   if (role === AgentRole.PrReviewer) {
     return "pr_reviewer";
+  }
+  if (role === AgentRole.Triage) {
+    return "triage";
   }
   return role;
 }

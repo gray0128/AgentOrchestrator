@@ -662,8 +662,9 @@ test("serve runtime can run full lifecycle when lifecycle adapters are configure
 
     assert.equal(response.status, 202);
     assert.equal(body.ok, true);
-    assert.equal(body.advancement.runId, "run_octo_repo_issue_123");
-    assert.equal(body.advancement.mergeSha, "merge-1");
+    assert.equal(body.advancement.dispatched, true);
+    assert.equal(body.advancement.lifecycle?.runId, "run_octo_repo_issue_123");
+    assert.equal(body.advancement.lifecycle?.mergeSha, "merge-1");
 
     const snapshot = getWorkflowRunSnapshot(database, {
       runId: "run_octo_repo_issue_123",

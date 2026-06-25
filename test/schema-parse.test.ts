@@ -8,7 +8,7 @@ const schemaDir = path.join("docs", "contracts", "schemas");
 test("all contract schemas parse as JSON", async () => {
   const files = (await readdir(schemaDir)).filter((file) => file.endsWith(".json")).sort();
 
-  assert.equal(files.length, 12);
+  assert.equal(files.length, 13);
 
   for (const file of files) {
     const raw = await readFile(path.join(schemaDir, file), "utf8");

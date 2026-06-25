@@ -10,15 +10,16 @@
     <header>
       <h1 id="run-title">Run 详情</h1>
       <nav>
-        <a href="/ui/">总览</a>
-        <a href="/ui/runs">Runs</a>
-        <a href="/ui/deliveries">Deliveries</a>
+        <a href="/ui/" data-nav="dashboard">总览</a>
+        <a href="/ui/runs" data-nav="runs">Runs</a>
+        <a href="/ui/deliveries" data-nav="deliveries">Deliveries</a>
       </nav>
     </header>
     <main>
       <div class="toolbar">
+        <a href="/ui/runs">← 返回列表</a>
         <label><input id="auto-refresh" type="checkbox" checked /> 每 10 秒自动刷新</label>
-        <button id="refresh-now" type="button">立即刷新</button>
+        <button id="refresh-now" class="primary" type="button">立即刷新</button>
         <span id="status-line" class="status-line"></span>
       </div>
 
@@ -37,19 +38,21 @@
 
       <section class="section">
         <h3>幂等动作</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Action</th>
-              <th>Target</th>
-              <th>Target ID</th>
-              <th>Status</th>
-              <th>Response Ref</th>
-              <th>Updated</th>
-            </tr>
-          </thead>
-          <tbody id="actions-table"></tbody>
-        </table>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Action</th>
+                <th>Target</th>
+                <th>Target ID</th>
+                <th>Status</th>
+                <th>Response Ref</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody id="actions-table"></tbody>
+          </table>
+        </div>
       </section>
     </main>
     <script src="/ui/app.js"></script>

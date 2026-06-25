@@ -104,11 +104,16 @@ export {
   renderPlanReviewComment,
 } from "./orchestrator/plan-comments.ts";
 export { runMockedEndToEndSmoke } from "./orchestrator/e2e-smoke.ts";
-export { runIssueLifecycle } from "./orchestrator/runtime-lifecycle.ts";
+export { runIssueLifecycle, runIssueLifecycleFromStep } from "./orchestrator/runtime-lifecycle.ts";
+export { dispatchIssueWork, fallbackTriage } from "./orchestrator/issue-dispatch.ts";
+export { mapStateToNextStep, runTriage } from "./orchestrator/triage.ts";
 export {
   advanceWebhookEvent,
   createIssueRunId,
 } from "./orchestrator/webhook-runtime.ts";
+export { shouldDiscardActor, isActorAllowed } from "./policy/actor-gate.ts";
+export { resolveLinkedIssueNumber, isPullRequestIssue } from "./webhooks/comment-dispatch.ts";
+export { issueHasAutopilotLabel, mentionsDispatchTrigger } from "./webhooks/domain-event.ts";
 export {
   aggregateChecks,
   canAdvanceMergeGateForHead,

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
-import { DomainEventType, normalizeGitHubWebhook } from "../src/index.ts";
+import { DomainEventType, normalizeGitHubWebhook } from "../src/webhooks/domain-event.ts";
 import type { DomainEvent } from "../src/index.ts";
 
 const receivedAt = new Date("2026-06-24T00:00:00.000Z");
@@ -78,6 +78,78 @@ test("check_run events normalize to succeeded, failed, or pending", () => {
   assert.equal(pending?.event_type, DomainEventType.ChecksPending);
   assert.equal(success?.pr, 45);
   assert.equal(success?.head_sha, "abc123");
+});
+
+test("issue_comment mention normalizes to comment dispatch when autopilot label exists", async () => {
+  const event = normalizeGitHubWebhook({
+    eventName: "issue_comment",
+    deliveryId: "delivery-comment",
+    receivedAt,
+    payload: {
+      action: "created",
+      repository: repo(),
+      issue: {
+        number: 123,
+        labels: [{ name: "agent:autopilot" }]
+      },
+      comment: { body: "@AgentOrchestratorIfify 请继续推进 PR 审核" },
+      sender: { login: "gray0128" }
+    }
+  });
+
+  await assertDomainEventMatchesSchema(event);
+  assert.equal(event?.event_type, DomainEventType.IssueCommentDispatchRequested);
+  assert.equal(event?.issue, 123);
+  assert.equal(event?.actor, "gray0128");
+});
+
+test("issue_comment on PR resolves linked issue from Closes marker", async () => {
+  const event = normalizeGitHubWebhook({
+    eventName: "issue_comment",
+    deliveryId: "delivery-pr-comment",
+    receivedAt,
+    payload: {
+      action: "created",
+      repository: repo(),
+      issue: {
+        number: 14,
+        body: "Summary\n\nCloses #13",
+        pull_request: {}
+      },
+      comment: { body: "@AgentOrchestratorIfify continue PR review" },
+      sender: { login: "gray0128" }
+    }
+  });
+
+  await assertDomainEventMatchesSchema(event);
+  assert.equal(event?.event_type, DomainEventType.IssueCommentDispatchRequested);
+  assert.equal(event?.issue, 13);
+  assert.equal(event?.pr, 14);
+});
+
+test("pull_request_review_comment mention normalizes to comment dispatch", async () => {
+  const event = normalizeGitHubWebhook({
+    eventName: "pull_request_review_comment",
+    deliveryId: "delivery-review-comment",
+    receivedAt,
+    payload: {
+      action: "created",
+      repository: repo(),
+      pull_request: {
+        number: 14,
+        body: "Closes #13",
+        head: { ref: "agent/issue-13-task", sha: "abc1234567890" }
+      },
+      comment: { body: "@AgentOrchestratorIfify fix this line" },
+      sender: { login: "gray0128" }
+    }
+  });
+
+  await assertDomainEventMatchesSchema(event);
+  assert.equal(event?.event_type, DomainEventType.IssueCommentDispatchRequested);
+  assert.equal(event?.issue, 13);
+  assert.equal(event?.pr, 14);
+  assert.equal(event?.head_sha, "abc1234567890");
 });
 
 test("unsupported webhook events are ignored", () => {

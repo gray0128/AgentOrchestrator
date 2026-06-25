@@ -10,6 +10,7 @@
     "event_type": {
       "enum": [
         "issue.autopilot_requested",
+        "issue.comment_dispatch_requested",
         "control.pause",
         "control.resume",
         "control.retry",
