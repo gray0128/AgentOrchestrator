@@ -167,6 +167,8 @@ export type AgentProcessMetadata = {
   readonly exitCode: number;
   readonly durationMs: number;
   readonly filesCreated?: readonly string[];
+  readonly agent?: string;
+  readonly model?: string;
 };
 
 export type AgentAdapterSuccess<Role extends AgentRole> = {

@@ -50,6 +50,47 @@ process.stdin.on("end", () => {
   assert.equal(result.result.run_id, "run_process");
   assert.equal(result.metadata.adapter, "process");
   assert.equal(result.metadata.exitCode, 0);
+  assert.equal(result.metadata.agent, "node");
+});
+
+test("process agent adapter unwraps _agent_meta wrapper and preserves agent model metadata", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "agent-orchestrator-process-"));
+  const adapter = new ProcessAgentAdapter({
+    role: AgentRole.Planner,
+    command: process.execPath,
+    args: [
+      "-e",
+      `
+let input = "";
+process.stdin.on("data", chunk => input += chunk);
+process.stdin.on("end", () => {
+  const request = JSON.parse(input);
+  console.log(JSON.stringify({
+    _agent_meta: { agent: "grok_build", model: "grok-3" },
+    result: {
+      schema: "agent-orchestrator.plan-result.v1",
+      role: "planner",
+      run_id: request.envelope.run_id,
+      issue: request.envelope.issue.number,
+      summary: request.prompt,
+      risk: "low",
+      implementation_steps: ["Implement the requested slice"],
+      test_plan: ["npm run check"],
+      expected_files: ["src/example.ts"],
+      created_at: "2026-06-24T08:00:00.000Z"
+    }
+  }));
+});
+`
+    ],
+    env: { PATH: process.env.PATH }
+  });
+
+  const result = await adapter.run(taskEnvelope(), "Wrapped plan", workspace);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.metadata.agent, "grok_build");
+  assert.equal(result.metadata.model, "grok-3");
 });
 
 test("process agent adapter rejects invalid JSON and schema-invalid output", async () => {

@@ -7,10 +7,28 @@ Agent output may provide bounded fields, but Orchestrator owns final GitHub-visi
 ## Shared Rendering Rules
 
 - Every automated comment, PR body, and review must include an `agent-orchestrator:v1` marker.
+- Agent-produced artifacts must include a visible attribution footer immediately before the marker.
 - Orchestrator computes run id, issue number, PR number, head sha, links, labels, and risk gates.
 - Agent-provided prose is inserted only into approved sections.
 - Secret-looking values are redacted before rendering.
 - Markdown output is bounded by configured maximum length; overflow is summarized with an audit note.
+
+## Agent Attribution Footer
+
+Agent-produced comments, PR bodies, and reviews append this footer before the marker:
+
+```markdown
+---
+
+Agent: <agent identity> · Role: <role> · Model: <model or unknown>
+```
+
+Rules:
+
+- `agent identity` comes from the selected process adapter (`--provider` value, routing catalog name, or command basename).
+- `role` is the orchestrator role that produced the artifact (`planner`, `plan_reviewer`, `implementer`, `pr_reviewer`, `triage`).
+- `model` comes from adapter process metadata when the provider reports it; otherwise `unknown`.
+- Orchestrator-only artifacts (planning started, blocked, CI failure, final summary) do not include this footer.
 
 ## Planning Started Comment
 
@@ -48,6 +66,10 @@ verdict: ACCEPTED
 
 - <orchestrator computed risk summary>
 
+---
+
+Agent: <agent identity> · Role: planner · Model: <model or unknown>
+
 <!-- agent-orchestrator:v1
 role: planner
 issue: <issue_number>
@@ -68,6 +90,10 @@ Verdict: <APPROVED|REQUEST_CHANGES|BLOCKED>
 ## Blocking Findings
 
 - <finding or "None">
+
+---
+
+Agent: <agent identity> · Role: plan_reviewer · Model: <model or unknown>
 
 <!-- agent-orchestrator:v1
 role: plan_reviewer
@@ -98,6 +124,10 @@ Plan: <plan comment URL>
 
 Closes #<issue_number>
 
+---
+
+Agent: <agent identity> · Role: implementer · Model: <model or unknown>
+
 <!-- agent-orchestrator:v1
 role: implementer
 issue: <issue_number>
@@ -119,6 +149,10 @@ Verdict: <APPROVED|REQUEST_CHANGES|BLOCKED>
 ## Blocking Findings
 
 - <finding or "None">
+
+---
+
+Agent: <agent identity> · Role: pr_reviewer · Model: <model or unknown>
 
 <!-- agent-orchestrator:v1
 role: pr_reviewer

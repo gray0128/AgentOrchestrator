@@ -1,9 +1,11 @@
 import type { PlanResult, ReviewerVerdict } from "../agents/adapter.ts";
 import { renderAgentMarker } from "../github/markers.ts";
 import { sanitizeMarkdown } from "../security/redaction.ts";
+import { appendAgentSubmissionFooter, type AgentAttribution } from "./agent-attribution.ts";
 
-export function renderPlanComment(plan: PlanResult): string {
-  return `## Plan
+export function renderPlanComment(plan: PlanResult, attribution?: AgentAttribution): string {
+  return appendAgentSubmissionFooter(
+    `## Plan
 
 ${sanitizeMarkdown(plan.summary)}
 
@@ -17,19 +19,21 @@ ${renderList(plan.test_plan)}
 
 ## Risk
 
-- ${plan.risk}
-
-${renderAgentMarker({
-  schema: "agent-orchestrator:v1",
-  role: "planner",
-  issue: plan.issue,
-  run_id: plan.run_id,
-  verdict: "READY_FOR_REVIEW"
-})}`;
+- ${plan.risk}`,
+    renderAgentMarker({
+      schema: "agent-orchestrator:v1",
+      role: "planner",
+      issue: plan.issue,
+      run_id: plan.run_id,
+      verdict: "READY_FOR_REVIEW"
+    }),
+    attribution
+  );
 }
 
-export function renderPlanReviewComment(verdict: ReviewerVerdict): string {
-  return `## Plan Review
+export function renderPlanReviewComment(verdict: ReviewerVerdict, attribution?: AgentAttribution): string {
+  return appendAgentSubmissionFooter(
+    `## Plan Review
 
 Verdict: ${verdict.verdict}
 
@@ -37,15 +41,36 @@ ${verdict.summary}
 
 ## Blocking Findings
 
-${renderBlockingFindings(verdict)}
+${renderBlockingFindings(verdict)}`,
+    renderAgentMarker({
+      schema: "agent-orchestrator:v1",
+      role: "plan_reviewer",
+      issue: verdict.issue,
+      run_id: verdict.run_id,
+      verdict: verdict.verdict
+    }),
+    attribution
+  );
+}
 
-${renderAgentMarker({
-  schema: "agent-orchestrator:v1",
-  role: "plan_reviewer",
-  issue: verdict.issue,
-  run_id: verdict.run_id,
-  verdict: verdict.verdict
-})}`;
+export function renderPrReviewComment(verdict: ReviewerVerdict, pr: number, attribution?: AgentAttribution): string {
+  return appendAgentSubmissionFooter(
+    `## PR Review
+
+Verdict: ${verdict.verdict}
+
+${verdict.summary}`,
+    renderAgentMarker({
+      schema: "agent-orchestrator:v1",
+      role: "pr_reviewer",
+      issue: verdict.issue,
+      pr,
+      run_id: verdict.run_id,
+      verdict: verdict.verdict,
+      head_sha: verdict.head_sha
+    }),
+    attribution
+  );
 }
 
 function renderList(items: readonly string[]): string {

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { AgentRole } from "../agents/adapter.ts";
 import type {
   AgentAdapter,
+  AgentProcessMetadata,
   ImplementationResult,
   PlanResult,
   ReviewerVerdict,
@@ -12,15 +13,15 @@ import type {
 } from "../agents/adapter.ts";
 import type { RepoPolicy } from "../contracts/validation.ts";
 import type { GitHubApiAdapter } from "../github/api.ts";
-import { renderAgentMarker } from "../github/markers.ts";
 import { createRequestHash } from "../github/request-hash.ts";
 import { casUpdateRunState, getWorkflowRunSnapshot, recordIdempotentAction, repairWorkflowRunFromArtifacts } from "../state/sqlite-store.ts";
 import type { StateDatabase, WorkflowRunSnapshot } from "../state/sqlite-store.ts";
 import { WorkflowEvent, WorkflowState } from "../state/state-machine.ts";
 import type { DomainEvent } from "../webhooks/domain-event.ts";
+import { attributionFromMetadata } from "./agent-attribution.ts";
 import { renderFinalSummary } from "./closeout.ts";
 import { evaluateMergeGate } from "./merge-gate.ts";
-import { renderPlanComment, renderPlanReviewComment } from "./plan-comments.ts";
+import { renderPlanComment, renderPlanReviewComment, renderPrReviewComment } from "./plan-comments.ts";
 import { aggregateChecks, decideFixLoop, mapPrReviewVerdictToEvent } from "./pr-gate.ts";
 import { renderPullRequestBody } from "./pr-body.ts";
 import { advanceWebhookEvent, createIssueRunId } from "./webhook-runtime.ts";
@@ -95,8 +96,8 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
   }
   const runId = accepted.runId;
 
-  const plan = await runAgent(input.agents.planner, plannerEnvelope(input, runId, now), "Create a low-risk plan.", input.workspace.path);
-  const planComment = renderPlanComment(plan);
+  const planRun = await runAgent(input.agents.planner, plannerEnvelope(input, runId, now), "Create a low-risk plan.", input.workspace.path);
+  const planComment = renderPlanComment(planRun.result, attributionFromMetadata(planRun.metadata, AgentRole.Planner));
   const planCommentResult = await input.github.createOrUpdateIssueComment({
     repo: input.event.repo,
     issue: input.issue.number,
@@ -110,13 +111,16 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
   }, now);
   transition(input.database, runId, WorkflowState.Planning, WorkflowState.PlanReviewing, null, WorkflowEvent.AgentPlanSubmitted, now);
 
-  const planReview = await runAgent(
+  const planReviewRun = await runAgent(
     input.agents.planReviewer,
-    planReviewerEnvelope(input, runId, plan, planCommentResult.responseRef, now),
+    planReviewerEnvelope(input, runId, planRun.result, planCommentResult.responseRef, now),
     "Review the plan.",
     input.workspace.path
   );
-  const planReviewComment = renderPlanReviewComment(planReview);
+  const planReviewComment = renderPlanReviewComment(
+    planReviewRun.result,
+    attributionFromMetadata(planReviewRun.metadata, AgentRole.PlanReviewer)
+  );
   const planReviewResult = await input.github.createOrUpdateIssueComment({
     repo: input.event.repo,
     issue: input.issue.number,
@@ -130,12 +134,13 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
   }, now);
   transition(input.database, runId, WorkflowState.PlanReviewing, WorkflowState.Implementing, null, WorkflowEvent.AgentPlanReviewApproved, now);
 
-  const implementation = await runAgent(
+  const implementationRun = await runAgent(
     input.agents.implementer,
-    implementerEnvelope(input, runId, plan, planCommentResult.responseRef, now),
+    implementerEnvelope(input, runId, planRun.result, planCommentResult.responseRef, now),
     "Implement the approved plan.",
     input.workspace.path
   );
+  const implementation = implementationRun.result;
   await input.github.createBranch({
     repo: input.event.repo,
     branch: implementation.branch,
@@ -152,12 +157,16 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     idempotencyKey: `${runId}:implementer:commit`,
     requestHash: createRequestHash({ runId, files: implementation.changed_files })
   });
-  const prDraft = renderPullRequestBody({
-    implementation,
-    pr: input.issue.number,
-    planCommentUrl: planCommentResult.responseRef,
-    headSha: commit.headSha
-  });
+  const implementerAttribution = attributionFromMetadata(implementationRun.metadata, AgentRole.Implementer);
+  const prDraft = renderPullRequestBody(
+    {
+      implementation,
+      pr: input.issue.number,
+      planCommentUrl: planCommentResult.responseRef,
+      headSha: commit.headSha
+    },
+    implementerAttribution
+  );
   const prResult = await input.github.createOrUpdatePullRequest({
     repo: input.event.repo,
     title: input.issue.title,
@@ -169,12 +178,15 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     requestHash: createRequestHash({ runId, prBody: prDraft })
   });
   const pr = extractPrNumber(prResult.responseRef) ?? input.issue.number;
-  const prBody = renderPullRequestBody({
-    implementation,
-    pr,
-    planCommentUrl: planCommentResult.responseRef,
-    headSha: commit.headSha
-  });
+  const prBody = renderPullRequestBody(
+    {
+      implementation,
+      pr,
+      planCommentUrl: planCommentResult.responseRef,
+      headSha: commit.headSha
+    },
+    implementerAttribution
+  );
   if (pr !== input.issue.number) {
     await input.github.createOrUpdatePullRequest({
       repo: input.event.repo,
@@ -236,7 +248,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     risk: implementation.risk,
     allowedRisks: input.policy.merge.auto_merge.allowed_risks,
     blockedLabels: input.policy.merge.auto_merge.blocked_labels,
-    planReviewCurrent: planReview.verdict === "APPROVED",
+    planReviewCurrent: planReviewRun.result.verdict === "APPROVED",
     prReviewHeadSha: prReviews[0]?.head_sha,
     approvedPrReviewCount: prReviews.length,
     requiredPrApprovals,
@@ -321,12 +333,13 @@ async function runRequiredPrReviews(input: {
   }
   const approved: ReviewerVerdict[] = [];
   for (const [index, reviewer] of requiredReviewers.entries()) {
-    const prReview = await runAgent(
+    const prReviewRun = await runAgent(
       reviewer,
       prReviewerEnvelope(input.input, input.runId, input.pr, input.headSha, input.now),
       `Review the PR independently as reviewer ${index + 1}.`,
       input.input.workspace.path
     );
+    const prReview = prReviewRun.result;
     const prReviewEvent = mapPrReviewVerdictToEvent(prReview, input.headSha);
     if (prReviewEvent === WorkflowEvent.AgentPrReviewChangesRequested) {
       const snapshot = getWorkflowRunSnapshot(input.input.database, { runId: input.runId });
@@ -370,7 +383,11 @@ async function runRequiredPrReviews(input: {
       pr: input.pr,
       headSha: input.headSha,
       event: "COMMENT",
-      body: renderPrReviewBody(prReview, input.pr),
+      body: renderPrReviewComment(
+        prReview,
+        input.pr,
+        attributionFromMetadata(prReviewRun.metadata, AgentRole.PrReviewer)
+      ),
       idempotencyKey: `${input.runId}:pr-reviewer:${index + 1}:comment`,
       requestHash: createRequestHash({ runId: input.runId, reviewer: index + 1, prReview })
     });
@@ -379,17 +396,25 @@ async function runRequiredPrReviews(input: {
   return approved;
 }
 
+type AgentRunOutput<Role extends AgentRole> = {
+  readonly result: ExtractAgentResult<Role>;
+  readonly metadata: AgentProcessMetadata;
+};
+
 async function runAgent<Role extends AgentRole>(
   adapter: AgentAdapter<Role>,
   envelope: TaskEnvelope,
   prompt: string,
   workspacePath: string
-): Promise<ExtractAgentResult<Role>> {
+): Promise<AgentRunOutput<Role>> {
   const result = await adapter.run(envelope, prompt, workspacePath);
   if (!result.ok) {
     throw new Error(`agent failed: ${result.errorCode} ${result.message}`);
   }
-  return result.result as ExtractAgentResult<Role>;
+  return {
+    result: result.result as ExtractAgentResult<Role>,
+    metadata: result.metadata
+  };
 }
 
 function plannerEnvelope(input: RunIssueLifecycleInput, runId: string, now: Date): TaskEnvelope {
@@ -505,24 +530,6 @@ function recordCompletedAction(
     status: "completed",
     now
   });
-}
-
-function renderPrReviewBody(verdict: ReviewerVerdict, pr: number): string {
-  return `## PR Review
-
-Verdict: ${verdict.verdict}
-
-${verdict.summary}
-
-${renderAgentMarker({
-  schema: "agent-orchestrator:v1",
-  role: "pr_reviewer",
-  issue: verdict.issue,
-  pr,
-  run_id: verdict.run_id,
-  verdict: verdict.verdict,
-  head_sha: verdict.head_sha
-})}`;
 }
 
 function readChangedFile(workspacePath: string, filePath: string): string {

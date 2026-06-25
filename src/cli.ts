@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { isSea } from "node:sea";
 import { fileURLToPath } from "node:url";
 
 import { AgentRole } from "./agents/adapter.ts";
@@ -1608,9 +1609,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-const invokedPath = process.argv[1] ? realpathSync(process.argv[1]) : undefined;
+function isCliEntrypoint(): boolean {
+  if (isSea()) {
+    return false;
+  }
+  const invokedPath = process.argv[1] ? realpathSync(process.argv[1]) : undefined;
+  return invokedPath === fileURLToPath(import.meta.url);
+}
 
-if (invokedPath === fileURLToPath(import.meta.url)) {
+if (isCliEntrypoint()) {
   const exitCode = await runCli(process.argv.slice(2));
   process.exitCode = exitCode;
 }

@@ -37,7 +37,17 @@ export class RoutingAgentAdapter<Role extends AgentRoleValue> implements AgentAd
         metadata: failureMetadata
       };
     }
-    return adapter.run(envelope, prompt, workspacePath);
+    const result = await adapter.run(envelope, prompt, workspacePath);
+    if (!profile || !result.metadata) {
+      return result;
+    }
+    return {
+      ...result,
+      metadata: {
+        ...result.metadata,
+        agent: result.metadata.agent ?? profile.name
+      }
+    };
   }
 
   #selectProfile(envelope: TaskEnvelope): AgentRoutingProfile<Role> | undefined {

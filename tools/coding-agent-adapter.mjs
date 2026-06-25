@@ -18,7 +18,15 @@ if (!contractJson) {
   process.exit(1);
 }
 
-process.stdout.write(`${JSON.stringify(normalizeContractJson(contractJson))}\n`);
+process.stdout.write(
+  `${JSON.stringify({
+    _agent_meta: {
+      agent: provider,
+      model: extractModel(child.stdout, contractJson)
+    },
+    result: normalizeContractJson(contractJson)
+  })}\n`
+);
 
 function runProvider(provider, taskPrompt, cwd) {
   if (provider === "codex_desktop") {
@@ -243,6 +251,30 @@ function parseJson(text) {
   } catch {
     return undefined;
   }
+}
+
+function extractModel(stdout, contractJson) {
+  const candidates = [stdout, contractJson];
+  for (const value of candidates) {
+    const model = modelFromValue(value);
+    if (model) {
+      return model;
+    }
+  }
+  return undefined;
+}
+
+function modelFromValue(value) {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const fields = [value.model, value.model_id, value.modelId, value.result?.model, value.usage?.model];
+  for (const candidate of fields) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return undefined;
 }
 
 function readFlag(name) {

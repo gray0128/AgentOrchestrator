@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { dirname, extname, join } from "node:path";
+import { getAsset, isSea } from "node:sea";
 import { fileURLToPath } from "node:url";
 
 import { ErrorCode } from "../errors.ts";
@@ -45,6 +46,15 @@ type HttpRequest = {
 };
 
 const publicDir = join(dirname(fileURLToPath(import.meta.url)), "public");
+
+function readPublicAsset(relativePath: string): Buffer {
+  const normalized = relativePath.replace(/^\/+/, "");
+  if (isSea()) {
+    const asset = getAsset(`ui/${normalized}`);
+    return Buffer.from(asset);
+  }
+  return readFileSync(join(publicDir, normalized));
+}
 
 const contentTypes: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
@@ -258,15 +268,15 @@ function serveStatic(pathname: string, response: HttpResponse): void {
     relativePath = "/deliveries.html";
   }
 
-  const filePath = join(publicDir, relativePath);
-  if (!filePath.startsWith(publicDir)) {
+  const normalizedPath = relativePath.replace(/^\/+/, "");
+  if (normalizedPath.includes("..")) {
     writeError(response, 404, ErrorCode.GitHubNotFound, "NOT_FOUND");
     return;
   }
 
   try {
-    const body = readFileSync(filePath);
-    const extension = extname(filePath);
+    const body = readPublicAsset(normalizedPath);
+    const extension = extname(normalizedPath);
     response.writeHead(200, { "content-type": contentTypes[extension] ?? "application/octet-stream" });
     response.end(body);
   } catch {

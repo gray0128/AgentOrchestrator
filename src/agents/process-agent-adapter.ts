@@ -55,10 +55,12 @@ export class ProcessAgentAdapter<Role extends AgentRoleValue> implements AgentAd
       stdin: JSON.stringify({ envelope, prompt }),
       timeoutMs: this.#timeoutMs
     });
+    const identity = resolveProcessAgentIdentity(this.#command, this.#args);
     const metadata: AgentProcessMetadata = {
       adapter: "process",
       exitCode: result.exitCode,
-      durationMs: Date.now() - startedAt
+      durationMs: Date.now() - startedAt,
+      agent: identity.agent
     };
 
     if (result.timedOut) {
@@ -79,7 +81,8 @@ export class ProcessAgentAdapter<Role extends AgentRoleValue> implements AgentAd
       );
     }
 
-    const validation = validateAgentResult(this.role, envelope, parsed);
+    const unwrapped = unwrapAgentOutput(parsed);
+    const validation = validateAgentResult(this.role, envelope, unwrapped.payload);
     if (!validation.ok) {
       return failure(ErrorCode.AgentSchemaInvalid, validation.errors.join("; "), metadata);
     }
@@ -88,9 +91,41 @@ export class ProcessAgentAdapter<Role extends AgentRoleValue> implements AgentAd
       ok: true,
       role: this.role,
       result: validation.value,
-      metadata
+      metadata: {
+        ...metadata,
+        agent: unwrapped.agent ?? metadata.agent,
+        model: unwrapped.model
+      }
     };
   }
+}
+
+function resolveProcessAgentIdentity(command: string, args: readonly string[]): Pick<AgentProcessMetadata, "agent"> {
+  const providerIndex = args.indexOf("--provider");
+  if (providerIndex >= 0) {
+    const provider = args[providerIndex + 1];
+    if (provider) {
+      return { agent: provider };
+    }
+  }
+  const basename = command.split(/[/\\]/).pop() ?? command;
+  return { agent: basename };
+}
+
+function unwrapAgentOutput(parsed: unknown): {
+  readonly payload: unknown;
+  readonly agent?: string;
+  readonly model?: string;
+} {
+  if (!isRecord(parsed) || !isRecord(parsed._agent_meta) || !("result" in parsed)) {
+    return { payload: parsed };
+  }
+  const meta = parsed._agent_meta;
+  return {
+    payload: parsed.result,
+    agent: typeof meta.agent === "string" ? meta.agent : undefined,
+    model: typeof meta.model === "string" ? meta.model : undefined
+  };
 }
 
 export function filterAgentEnv(env: Record<string, string | undefined>): Record<string, string> {

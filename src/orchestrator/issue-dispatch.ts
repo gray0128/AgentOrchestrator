@@ -3,6 +3,7 @@ import type { AgentAdapter } from "../agents/adapter.ts";
 import { createRequestHash } from "../github/request-hash.ts";
 import type { GitHubApiAdapter } from "../github/api.ts";
 import { renderAgentMarker } from "../github/markers.ts";
+import { appendAgentSubmissionFooter, type AgentAttribution } from "./agent-attribution.ts";
 import { getWorkflowRunSnapshot, insertWorkflowRun, recordIdempotentAction } from "../state/sqlite-store.ts";
 import type { StateDatabase, WorkflowRunSnapshot } from "../state/sqlite-store.ts";
 import { WorkflowState } from "../state/state-machine.ts";
@@ -38,7 +39,7 @@ export async function dispatchIssueWork(input: DispatchIssueWorkInput): Promise<
   const now = input.now ?? new Date();
   const runId = await ensureRunExists(input, now);
   const snapshot = getWorkflowRunSnapshot(input.database, { runId });
-  const triage = await runTriage({
+  const triageRun = await runTriage({
     runId,
     repo: input.repo,
     issue: input.issue,
@@ -49,8 +50,9 @@ export async function dispatchIssueWork(input: DispatchIssueWorkInput): Promise<
     now,
     triageAgent: input.triageAgent
   });
+  const triage = triageRun.decision;
 
-  const triageComment = renderTriageComment(triage);
+  const triageComment = renderTriageComment(triage, triageRun.attribution);
   const triageCommentResult = await input.github.createOrUpdateIssueComment({
     repo: input.event.repo,
     issue: input.issue.number,
@@ -143,24 +145,18 @@ async function ensureRunExists(input: DispatchIssueWorkInput, now: Date): Promis
   return runId;
 }
 
-function renderTriageComment(triage: TriageDecision): string {
+function renderTriageComment(triage: TriageDecision, attribution?: AgentAttribution): string {
   const filtered =
     triage.filtered_topics && triage.filtered_topics.length > 0
       ? `\n\nFiltered non-repository topics: ${triage.filtered_topics.join(", ")}`
       : "";
-  return `## Triage
-
-Scope: ${triage.scope}
-Next step: ${triage.next_step}
-Reason: ${triage.reason}${filtered}
-
-${renderAgentMarker({
-  schema: "agent-orchestrator:v1",
-  role: "orchestrator",
-  issue: triage.issue,
-  run_id: triage.run_id,
-  verdict: "ACCEPTED"
-})}
+  const marker = `${renderAgentMarker({
+    schema: "agent-orchestrator:v1",
+    role: "orchestrator",
+    issue: triage.issue,
+    run_id: triage.run_id,
+    verdict: "ACCEPTED"
+  })}
 <!-- agent-orchestrator:v1
 role: triage
 issue: ${triage.issue}
@@ -168,6 +164,15 @@ run_id: ${triage.run_id}
 scope: ${triage.scope}
 next_step: ${triage.next_step}
 -->`;
+  return appendAgentSubmissionFooter(
+    `## Triage
+
+Scope: ${triage.scope}
+Next step: ${triage.next_step}
+Reason: ${triage.reason}${filtered}`,
+    marker,
+    attribution
+  );
 }
 
 export type RuntimeLifecycleAgentsWithTriage = RuntimeLifecycleAgents & {

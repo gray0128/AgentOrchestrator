@@ -102,11 +102,19 @@ export type { StoredIssueComment } from "./github/fake-github-api.ts";
 export {
   renderPlanComment,
   renderPlanReviewComment,
+  renderPrReviewComment,
 } from "./orchestrator/plan-comments.ts";
+export {
+  appendAgentSubmissionFooter,
+  attributionFromMetadata,
+  renderAgentAttribution,
+} from "./orchestrator/agent-attribution.ts";
 export { runMockedEndToEndSmoke } from "./orchestrator/e2e-smoke.ts";
 export { runIssueLifecycle, runIssueLifecycleFromStep } from "./orchestrator/runtime-lifecycle.ts";
 export { dispatchIssueWork, fallbackTriage } from "./orchestrator/issue-dispatch.ts";
 export { mapStateToNextStep, runTriage } from "./orchestrator/triage.ts";
+export type { TriageRunResult } from "./orchestrator/triage.ts";
+export type { AgentAttribution } from "./orchestrator/agent-attribution.ts";
 export {
   advanceWebhookEvent,
   createIssueRunId,

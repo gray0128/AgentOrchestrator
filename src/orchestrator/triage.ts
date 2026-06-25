@@ -2,6 +2,7 @@ import { AgentRole } from "../agents/adapter.ts";
 import type { AgentAdapter, TaskEnvelope, TriageNextStep, TriageResult, TriageScope } from "../agents/adapter.ts";
 import type { WorkflowRunSnapshot } from "../state/sqlite-store.ts";
 import { WorkflowState } from "../state/state-machine.ts";
+import { attributionFromMetadata, type AgentAttribution } from "./agent-attribution.ts";
 import type { RuntimeLifecycleIssue, RuntimeLifecycleRepo } from "./runtime-lifecycle.ts";
 
 const outOfScopePatterns = [
@@ -36,7 +37,12 @@ export type TriageInput = {
 
 export type TriageDecision = TriageResult;
 
-export async function runTriage(input: TriageInput): Promise<TriageDecision> {
+export type TriageRunResult = {
+  readonly decision: TriageDecision;
+  readonly attribution?: AgentAttribution;
+};
+
+export async function runTriage(input: TriageInput): Promise<TriageRunResult> {
   if (input.triageAgent) {
     const envelope = buildTriageEnvelope(input);
     const result = await input.triageAgent.run(
@@ -45,10 +51,13 @@ export async function runTriage(input: TriageInput): Promise<TriageDecision> {
       input.workspacePath
     );
     if (result.ok) {
-      return normalizeTriageResult(result.result, input.snapshot?.run.state);
+      return {
+        decision: normalizeTriageResult(result.result, input.snapshot?.run.state),
+        attribution: attributionFromMetadata(result.metadata, AgentRole.Triage)
+      };
     }
   }
-  return fallbackTriage(input);
+  return { decision: fallbackTriage(input) };
 }
 
 export function fallbackTriage(input: TriageInput): TriageDecision {

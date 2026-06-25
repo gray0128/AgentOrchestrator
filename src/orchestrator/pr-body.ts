@@ -1,6 +1,7 @@
 import type { ImplementationResult } from "../agents/adapter.ts";
 import { renderAgentMarker } from "../github/markers.ts";
 import { sanitizeMarkdown } from "../security/redaction.ts";
+import { appendAgentSubmissionFooter, type AgentAttribution } from "./agent-attribution.ts";
 
 export type RenderPrBodyInput = {
   readonly implementation: ImplementationResult;
@@ -9,10 +10,11 @@ export type RenderPrBodyInput = {
   readonly headSha: string;
 };
 
-export function renderPullRequestBody(input: RenderPrBodyInput): string {
+export function renderPullRequestBody(input: RenderPrBodyInput, attribution?: AgentAttribution): string {
   const { implementation } = input;
 
-  return `## Summary
+  return appendAgentSubmissionFooter(
+    `## Summary
 
 ${sanitizeMarkdown(implementation.pr_body_fields.summary)}
 
@@ -28,16 +30,17 @@ ${renderList(implementation.pr_body_fields.tests)}
 
 - ${sanitizeMarkdown(implementation.pr_body_fields.risk)}
 
-Closes #${implementation.issue}
-
-${renderAgentMarker({
-  schema: "agent-orchestrator:v1",
-  role: "implementer",
-  issue: implementation.issue,
-  pr: input.pr,
-  run_id: implementation.run_id,
-  head_sha: input.headSha
-})}`;
+Closes #${implementation.issue}`,
+    renderAgentMarker({
+      schema: "agent-orchestrator:v1",
+      role: "implementer",
+      issue: implementation.issue,
+      pr: input.pr,
+      run_id: implementation.run_id,
+      head_sha: input.headSha
+    }),
+    attribution
+  );
 }
 
 function renderList(items: readonly string[]): string {
