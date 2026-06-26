@@ -11,13 +11,14 @@
   },
   "scripts": {
     "build:sea": "node tools/build/build-sea.mjs",
-    "check": "npm run schema:check && npm run format:check && npm test",
+    "check": "npm run schema:check && npm run format:check && npm run test:unit",
     "cli": "node --experimental-strip-types src/cli.ts",
     "format": "node tools/format-check.mjs --write",
     "format:check": "node tools/format-check.mjs",
     "schema:check": "node tools/check-schemas.mjs",
     "smoke:e2e": "node --experimental-strip-types --test test/e2e-smoke.test.ts",
-    "test": "node --experimental-strip-types --test test/**/*.test.ts"
+    "test": "node --experimental-strip-types --test test/**/*.test.ts",
+    "test:unit": "node tools/run-unit-tests.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"
