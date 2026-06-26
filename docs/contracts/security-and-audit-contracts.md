@@ -72,6 +72,8 @@ Violations enter `blocked` with `PROMPT_INJECTION_POLICY_VIOLATION` when they af
 - Implementer worktrees must be created under `workspaces.root` through Workspace Manager.
 - Full lifecycle must validate the planned workspace path and branch before implementer execution.
 - GitHub commit writes must use actual git diff evidence from the controlled worktree, not agent-declared `changed_files`.
+- Full lifecycle must evaluate `evaluatePathPolicy` against actual git diff paths before branch, commit, PR, or merge writes.
+- Denied, high-risk, or outside-allow paths enter `blocked` with `policy.block`, a blocked issue comment naming the file evidence, and `needs-human` plus `agent:blocked` labels.
 - Empty worktree diffs and agent/diff mismatches fail before any GitHub write side effects.
 - Implementer must not write outside the prepared worktree; path reads are checked against both `workspaces.root` and the worktree directory.
 - Each implementer prepare removes and recreates the planned git worktree from the current default-branch head. Prior uncommitted worktree state is not preserved across implementer re-entry.
