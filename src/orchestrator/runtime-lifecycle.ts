@@ -139,7 +139,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
   }, now);
   transition(input.database, runId, WorkflowState.PlanReviewing, WorkflowState.Implementing, null, WorkflowEvent.AgentPlanReviewApproved, now);
 
-  const controlledPlan = validateControlledWorkspace({
+  validateControlledWorkspace({
     workspaceRoot: input.workspaceRoot,
     repoName: input.repo.name,
     issue: input.issue.number,
@@ -155,9 +155,6 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     sourceRepoPath: input.sourceRepoPath,
     baseBranch: input.repo.default_branch
   });
-  if (preparedWorkspace.path !== controlledPlan.path || preparedWorkspace.branch !== controlledPlan.branch) {
-    throw new Error("controlled workspace plan mismatch after preparation");
-  }
 
   const implementationRun = await runAgent(
     input.agents.implementer,
@@ -185,7 +182,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     branch: implementation.branch,
     expectedHeadSha: implementation.base_sha,
     message: `Implement issue #${input.issue.number}`,
-    files: readDiffFileContents(preparedWorkspace.path, diffEvidence.changedFiles),
+    files: readDiffFileContents(input.workspaceRoot, preparedWorkspace.path, diffEvidence.changedFiles),
     idempotencyKey: `${runId}:implementer:commit`,
     requestHash: createRequestHash({ runId, files: diffEvidence.changedFiles })
   });

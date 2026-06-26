@@ -73,6 +73,7 @@ Violations enter `blocked` with `PROMPT_INJECTION_POLICY_VIOLATION` when they af
 - Full lifecycle must validate the planned workspace path and branch before implementer execution.
 - GitHub commit writes must use actual git diff evidence from the controlled worktree, not agent-declared `changed_files`.
 - Empty worktree diffs and agent/diff mismatches fail before any GitHub write side effects.
+- Implementer must not write outside the prepared worktree; path reads are checked against both `workspaces.root` and the worktree directory.
 
 ## Policy Blocks
 

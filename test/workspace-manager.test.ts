@@ -10,10 +10,11 @@ import {
   createWorkspacePlan,
   parseGitNameStatus,
   prepareImplementerWorkspace,
+  readDiffFileContents,
   slugify,
   validateControlledWorkspace
 } from "../src/index.ts";
-import { createGitWorkspaceFixture, seedWorkspaceFile } from "./helpers/git-workspace-fixture.ts";
+import { createGitWorkspaceFixture, runGit, seedWorkspaceFile } from "./helpers/git-workspace-fixture.ts";
 
 test("workspace manager creates deterministic branch names and controlled paths", () => {
   const plan = createWorkspacePlan({
@@ -75,6 +76,82 @@ test("workspace manager prepares implementer worktree and collects actual diff",
   const evidence = collectWorkspaceDiffEvidence(prepared.path, ["docs/example.md"]);
   assert.deepEqual(diff.map((file) => file.path), ["docs/example.md"]);
   assert.deepEqual(evidence.changedFiles, ["docs/example.md"]);
+});
+
+test("workspace manager collects staged changes against HEAD", () => {
+  const fixture = createGitWorkspaceFixture({
+    repoName: "repo",
+    issue: 123,
+    issueTitle: "Low-risk docs update"
+  });
+  const prepared = prepareImplementerWorkspace({
+    workspaceRoot: fixture.workspaceRoot,
+    repoName: "repo",
+    issue: 123,
+    issueTitle: "Low-risk docs update",
+    sourceRepoPath: fixture.sourceRepoPath,
+    baseBranch: "main"
+  });
+  seedWorkspaceFile(prepared.path, "docs/example.md", "staged update\n");
+  runGit(prepared.path, ["add", "docs/example.md"]);
+
+  const diff = collectGitDiff(prepared.path);
+  assert.deepEqual(diff.map((file) => file.path), ["docs/example.md"]);
+});
+
+test("workspace manager reuses an existing registered worktree for the same branch", () => {
+  const fixture = createGitWorkspaceFixture({
+    repoName: "repo",
+    issue: 123,
+    issueTitle: "Low-risk docs update"
+  });
+  const prepared = prepareImplementerWorkspace({
+    workspaceRoot: fixture.workspaceRoot,
+    repoName: "repo",
+    issue: 123,
+    issueTitle: "Low-risk docs update",
+    sourceRepoPath: fixture.sourceRepoPath,
+    baseBranch: "main"
+  });
+  seedWorkspaceFile(prepared.path, "docs/example.md", "draft\n");
+
+  const reused = prepareImplementerWorkspace({
+    workspaceRoot: fixture.workspaceRoot,
+    repoName: "repo",
+    issue: 123,
+    issueTitle: "Low-risk docs update",
+    sourceRepoPath: fixture.sourceRepoPath,
+    baseBranch: "main"
+  });
+
+  assert.equal(reused.path, prepared.path);
+  assert.equal(reused.branch, prepared.branch);
+});
+
+test("readDiffFileContents rejects files outside workspaces.root", () => {
+  const fixture = createGitWorkspaceFixture({
+    repoName: "repo",
+    issue: 123,
+    issueTitle: "Low-risk docs update"
+  });
+  const prepared = prepareImplementerWorkspace({
+    workspaceRoot: fixture.workspaceRoot,
+    repoName: "repo",
+    issue: 123,
+    issueTitle: "Low-risk docs update",
+    sourceRepoPath: fixture.sourceRepoPath,
+    baseBranch: "main"
+  });
+  seedWorkspaceFile(prepared.path, "docs/example.md", "updated\n");
+
+  assert.throws(
+    () => readDiffFileContents(fixture.workspaceRoot, prepared.path, ["../../../outside.txt"]),
+    (error: unknown) => {
+      assert.ok(error instanceof OrchestratorError);
+      assert.equal(error.code, ErrorCode.WorkspacePathEscape);
+      return true;
+    }
+  );
 });
 
 test("workspace slug fallback keeps branch names valid", () => {

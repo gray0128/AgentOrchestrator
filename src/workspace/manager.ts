@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import { ErrorCode, OrchestratorError } from "../errors.ts";
@@ -75,7 +75,25 @@ export function prepareImplementerWorkspace(input: PrepareImplementerWorkspaceIn
   const plan = createWorkspacePlan(input);
   mkdirSync(input.workspaceRoot, { recursive: true });
   const baseSha = resolveBaseSha(input.sourceRepoPath, input.baseBranch);
-  removeExistingWorktree(input.sourceRepoPath, plan.path);
+  const existingWorktree = resolveRegisteredWorktree(input.sourceRepoPath, plan.path);
+  if (existingWorktree) {
+    if (existingWorktree.branch !== plan.branch) {
+      throw new OrchestratorError(
+        ErrorCode.WorkspacePrepareFailed,
+        `Workspace path is already bound to branch ${existingWorktree.branch}, expected ${plan.branch}`
+      );
+    }
+    return {
+      ...plan,
+      baseSha
+    };
+  }
+  if (existsSync(plan.path)) {
+    throw new OrchestratorError(
+      ErrorCode.WorkspacePrepareFailed,
+      `Workspace path already exists outside git worktree management: ${plan.path}`
+    );
+  }
   runGitOrThrow(input.sourceRepoPath, ["worktree", "add", "-B", plan.branch, plan.path, baseSha], "prepare implementer worktree");
   return {
     ...plan,
@@ -84,7 +102,7 @@ export function prepareImplementerWorkspace(input: PrepareImplementerWorkspaceIn
 }
 
 export function collectGitDiff(workspacePath: string): readonly DiffFile[] {
-  const tracked = runGit(workspacePath, ["diff", "--name-status"]);
+  const tracked = runGit(workspacePath, ["diff", "HEAD", "--name-status"]);
   const untracked = runGit(workspacePath, ["ls-files", "--others", "--exclude-standard"]);
   const files = parseGitNameStatus(tracked.stdout);
   const added = untracked.stdout
@@ -115,10 +133,14 @@ export function collectWorkspaceDiffEvidence(
   return { changedFiles: actualPaths, diff };
 }
 
-export function readDiffFileContents(workspacePath: string, changedFiles: readonly string[]): readonly { readonly path: string; readonly content: string }[] {
+export function readDiffFileContents(
+  workspaceRoot: string,
+  workspacePath: string,
+  changedFiles: readonly string[]
+): readonly { readonly path: string; readonly content: string }[] {
   return changedFiles.map((filePath) => ({
     path: filePath,
-    content: readWorkspaceFile(workspacePath, filePath)
+    content: readWorkspaceFile(workspaceRoot, workspacePath, filePath)
   }));
 }
 
@@ -160,13 +182,26 @@ export function slugify(value: string): string {
   return slug || "task";
 }
 
-function readWorkspaceFile(workspacePath: string, filePath: string): string {
+function readWorkspaceFile(workspaceRoot: string, workspacePath: string, filePath: string): string {
   const absolutePath = path.resolve(workspacePath, filePath);
-  assertPathUnderRoot(workspacePath, absolutePath);
+  assertPathUnderRoot(workspaceRoot, absolutePath);
+  assertPathUnderWorkspace(workspacePath, absolutePath);
   try {
     return readFileSync(absolutePath, "utf8");
   } catch {
     throw new OrchestratorError(ErrorCode.WorkspaceFileMissing, `Changed file is missing from controlled workspace: ${filePath}`);
+  }
+}
+
+function assertPathUnderWorkspace(workspacePath: string, candidate: string): void {
+  const resolvedWorkspace = path.resolve(workspacePath);
+  const resolvedCandidate = path.resolve(candidate);
+  const relative = path.relative(resolvedWorkspace, resolvedCandidate);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new OrchestratorError(
+      ErrorCode.WorkspacePathEscape,
+      `Changed file escapes controlled worktree: ${resolvedCandidate}`
+    );
   }
 }
 
@@ -185,19 +220,49 @@ function resolveBaseSha(sourceRepoPath: string, baseBranch: string): string {
   );
 }
 
-function removeExistingWorktree(sourceRepoPath: string, workspacePath: string): void {
-  if (!existsSync(workspacePath)) {
-    return;
+function resolveRegisteredWorktree(
+  sourceRepoPath: string,
+  workspacePath: string
+): { readonly path: string; readonly branch: string } | undefined {
+  const resolvedPath = normalizeComparablePath(workspacePath);
+  for (const worktree of parseWorktreePorcelain(runGit(sourceRepoPath, ["worktree", "list", "--porcelain"]).stdout)) {
+    if (worktree.path === resolvedPath) {
+      return worktree;
+    }
   }
-  const listed = runGit(sourceRepoPath, ["worktree", "list", "--porcelain"]);
-  if (listed.stdout.includes(workspacePath)) {
-    runGitOrThrow(sourceRepoPath, ["worktree", "remove", "--force", workspacePath], "remove existing implementer worktree");
-    return;
+  return undefined;
+}
+
+function normalizeComparablePath(candidate: string): string {
+  try {
+    return realpathSync.native(candidate);
+  } catch {
+    return path.resolve(candidate);
   }
-  throw new OrchestratorError(
-    ErrorCode.WorkspacePrepareFailed,
-    `Workspace path already exists outside git worktree management: ${workspacePath}`
-  );
+}
+
+function parseWorktreePorcelain(output: string): readonly { readonly path: string; readonly branch: string }[] {
+  const entries: { path: string; branch: string }[] = [];
+  let currentPath = "";
+  let currentBranch = "";
+  for (const line of output.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      if (currentPath && currentBranch) {
+        entries.push({ path: currentPath, branch: currentBranch });
+      }
+      currentPath = normalizeComparablePath(line.slice("worktree ".length));
+      currentBranch = "";
+      continue;
+    }
+    if (line.startsWith("branch ")) {
+      const ref = line.slice("branch ".length);
+      currentBranch = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
+    }
+  }
+  if (currentPath && currentBranch) {
+    entries.push({ path: currentPath, branch: currentBranch });
+  }
+  return entries;
 }
 
 function runGit(cwd: string, args: readonly string[]): { readonly ok: boolean; readonly stdout: string; readonly stderr: string } {

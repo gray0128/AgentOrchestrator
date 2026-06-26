@@ -58,7 +58,7 @@ export function seedWorkspaceFile(workspacePath: string, relativePath: string, c
   writeFileSync(absolutePath, content);
 }
 
-function runGit(cwd: string, args: readonly string[]): void {
+export function runGit(cwd: string, args: readonly string[]): void {
   const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
   if (result.status !== 0) {
     throw new Error(`git ${args.join(" ")} failed in ${cwd}: ${result.stderr || result.stdout}`);
