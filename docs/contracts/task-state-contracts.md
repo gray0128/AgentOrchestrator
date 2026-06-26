@@ -28,7 +28,7 @@
 | `plan_reviewing` | `agent.plan_review_approved` | `implementing` | Reviewer verdict `APPROVED`. |
 | `plan_reviewing` | `agent.plan_review_changes_requested` | `planning` | Retry budget available. |
 | `plan_reviewing` | `agent.plan_review_blocked` | `blocked` | Reviewer verdict `BLOCKED`. |
-| `implementing` | `agent.implementation_ready` | `pr_opened` | Diff allowed, PR created or rebound. |
+| `implementing` | `agent.implementation_ready` | `pr_opened` | Actual git diff passes path policy, PR created or rebound. |
 | `pr_opened` | `pull_request.bound` | `pr_reviewing` | PR head sha recorded. |
 | `pr_reviewing` | `agent.pr_review_approved` | `ci_waiting` | Review bound to current head sha. |
 | `pr_reviewing` | `agent.pr_review_changes_requested` | `fixing` | Fix rounds below policy max. |
