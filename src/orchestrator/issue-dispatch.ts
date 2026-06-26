@@ -1,10 +1,17 @@
 import { AgentRole } from "../agents/adapter.ts";
 import type { AgentAdapter } from "../agents/adapter.ts";
+import { OrchestratorError } from "../errors.ts";
 import { createRequestHash } from "../github/request-hash.ts";
+import { sanitizeMarkdown } from "../security/redaction.ts";
 import type { GitHubApiAdapter } from "../github/api.ts";
 import { renderAgentMarker } from "../github/markers.ts";
 import { appendAgentSubmissionFooter, type AgentAttribution } from "./agent-attribution.ts";
-import { getWorkflowRunSnapshot, insertWorkflowRun, recordIdempotentAction } from "../state/sqlite-store.ts";
+import {
+  getWorkflowRunSnapshot,
+  insertWorkflowRun,
+  recordIdempotentAction,
+  recordRunLastError
+} from "../state/sqlite-store.ts";
 import type { StateDatabase, WorkflowRunSnapshot } from "../state/sqlite-store.ts";
 import { WorkflowState } from "../state/state-machine.ts";
 import { DomainEventType } from "../webhooks/domain-event.ts";
@@ -93,17 +100,29 @@ export async function dispatchIssueWork(input: DispatchIssueWorkInput): Promise<
     triage.next_step === "planning" && snapshot && !shouldRunFullLifecycle(snapshot)
       ? mapStateToNextStep(snapshot.run.state, true, input.triggerComment ?? "")
       : triage.next_step;
-  const lifecycle =
-    effectiveStep === "planning" && shouldRunFullLifecycle(snapshot)
-      ? await runIssueLifecycle(input)
-      : await runIssueLifecycleFromStep(input, effectiveStep, runId);
+  try {
+    const lifecycle =
+      effectiveStep === "planning" && shouldRunFullLifecycle(snapshot)
+        ? await runIssueLifecycle(input)
+        : await runIssueLifecycleFromStep(input, effectiveStep, runId);
 
-  return {
-    dispatched: true,
-    triage,
-    lifecycle,
-    commentRef: triageCommentResult.responseRef
-  };
+    return {
+      dispatched: true,
+      triage,
+      lifecycle,
+      commentRef: triageCommentResult.responseRef
+    };
+  } catch (error) {
+    if (error instanceof OrchestratorError) {
+      recordRunLastError(input.database, {
+        runId,
+        errorCode: error.code,
+        errorMessage: sanitizeMarkdown(error.message),
+        now
+      });
+    }
+    throw error;
+  }
 }
 
 function shouldRunFullLifecycle(snapshot: WorkflowRunSnapshot | undefined): boolean {

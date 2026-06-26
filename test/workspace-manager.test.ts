@@ -142,6 +142,32 @@ test("workspace manager recreates an existing worktree from current main head", 
   });
 });
 
+test("readDiffFileContents fails with registered error when changed file is missing", () => {
+  const fixture = createGitWorkspaceFixture({
+    repoName: "repo",
+    issue: 123,
+    issueTitle: "Low-risk docs update"
+  });
+  const prepared = prepareImplementerWorkspace({
+    workspaceRoot: fixture.workspaceRoot,
+    repoName: "repo",
+    issue: 123,
+    issueTitle: "Low-risk docs update",
+    sourceRepoPath: fixture.sourceRepoPath,
+    baseBranch: "main"
+  });
+  seedWorkspaceFile(prepared.path, "docs/example.md", "updated\n");
+
+  assert.throws(
+    () => readDiffFileContents(fixture.workspaceRoot, prepared.path, ["docs/missing.md"]),
+    (error: unknown) => {
+      assert.ok(error instanceof OrchestratorError);
+      assert.equal(error.code, ErrorCode.WorkspaceFileMissing);
+      return true;
+    }
+  );
+});
+
 test("readDiffFileContents rejects files outside workspaces.root", () => {
   const fixture = createGitWorkspaceFixture({
     repoName: "repo",
@@ -163,6 +189,31 @@ test("readDiffFileContents rejects files outside workspaces.root", () => {
     (error: unknown) => {
       assert.ok(error instanceof OrchestratorError);
       assert.equal(error.code, ErrorCode.WorkspacePathEscape);
+      return true;
+    }
+  );
+});
+
+test("prepareImplementerWorkspace fails fast when base branch sha cannot be resolved", () => {
+  const fixture = createGitWorkspaceFixture({
+    repoName: "repo",
+    issue: 123,
+    issueTitle: "Low-risk docs update"
+  });
+
+  assert.throws(
+    () =>
+      prepareImplementerWorkspace({
+        workspaceRoot: fixture.workspaceRoot,
+        repoName: "repo",
+        issue: 123,
+        issueTitle: "Low-risk docs update",
+        sourceRepoPath: fixture.sourceRepoPath,
+        baseBranch: "missing-branch"
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof OrchestratorError);
+      assert.equal(error.code, ErrorCode.WorkspacePrepareFailed);
       return true;
     }
   );

@@ -54,6 +54,13 @@ export type IdempotentActionResult =
   | { readonly outcome: "skipped" }
   | { readonly outcome: "conflict"; readonly errorCode: typeof ErrorCode.IdempotencyConflict };
 
+export type RecordRunLastErrorInput = {
+  readonly runId: string;
+  readonly errorCode: ErrorCode;
+  readonly errorMessage: string;
+  readonly now: Date;
+};
+
 export type InvalidateHeadInput = {
   readonly runId: string;
   readonly payloadHeadSha: string;
@@ -439,6 +446,20 @@ export function casUpdateRunState(database: StateDatabase, input: CasUpdateRunSt
     database.exec("ROLLBACK");
     throw error;
   }
+}
+
+export function recordRunLastError(database: StateDatabase, input: RecordRunLastErrorInput): void {
+  database
+    .prepare(
+      `
+        UPDATE workflow_runs
+        SET last_error_code = ?,
+            last_error_message = ?,
+            updated_at = ?
+        WHERE run_id = ?
+      `
+    )
+    .run(input.errorCode, input.errorMessage, input.now.toISOString(), input.runId);
 }
 
 export function recordIdempotentAction(

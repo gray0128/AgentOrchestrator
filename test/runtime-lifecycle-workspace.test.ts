@@ -1,4 +1,6 @@
 import { strict as assert } from "node:assert";
+import { unlinkSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -8,13 +10,15 @@ import {
   FakeGitHubApiAdapter,
   OrchestratorError,
   WorkflowState,
+  dispatchIssueWork,
   getWorkflowRunSnapshot,
   migrateStateDatabase,
   openStateDatabase,
   runIssueLifecycle
 } from "../src/index.ts";
+import { buildDispatchInput } from "../src/orchestrator/issue-dispatch.ts";
 import { DomainEventType } from "../src/webhooks/domain-event.ts";
-import { createGitWorkspaceFixture, seedWorkspaceFile } from "./helpers/git-workspace-fixture.ts";
+import { createGitWorkspaceFixture, runGit, seedWorkspaceFile } from "./helpers/git-workspace-fixture.ts";
 
 const repo = { owner: "octo", name: "repo", default_branch: "main" };
 const issue = {
@@ -362,6 +366,165 @@ test("runtime lifecycle blocks outside-allow paths from actual git diff before G
     expectedErrorCode: ErrorCode.PolicyDeniedPath,
     expectedEvidence: /Paths outside allow rules from actual git diff: src\/main\.ts/
   });
+});
+
+test("runtime lifecycle fails when changed file disappears before commit read", async () => {
+  const fixture = createGitWorkspaceFixture({
+    repoName: repo.name,
+    issue: issue.number,
+    issueTitle: issue.title
+  });
+  const database = openStateDatabase();
+  migrateStateDatabase(database);
+  const github = new FakeGitHubApiAdapter();
+
+  await assert.rejects(
+    () =>
+      runIssueLifecycle({
+        database,
+        github,
+        agents: lifecycleAgents({
+          seedWorkspace: (workspacePath) => {
+            seedWorkspaceFile(workspacePath, "docs/example.md", "updated\n");
+            runGit(workspacePath, ["add", "docs/example.md"]);
+            unlinkSync(join(workspacePath, "docs/example.md"));
+          }
+        }),
+        event: {
+          schema: "agent-orchestrator.domain-event.v1",
+          event_type: DomainEventType.IssueAutopilotRequested,
+          delivery_id: "delivery-missing-file",
+          repo: { owner: repo.owner, name: repo.name },
+          issue: issue.number,
+          actor: issue.author,
+          source: "webhook",
+          created_at: "2026-06-24T08:00:00.000Z"
+        },
+        repo,
+        issue,
+        workspace: {
+          path: fixture.workspacePath,
+          branch: fixture.branch
+        },
+        workspaceRoot: fixture.workspaceRoot,
+        sourceRepoPath: fixture.sourceRepoPath,
+        policy,
+        policySummary: "docs policy",
+        now: new Date("2026-06-24T08:00:00.000Z")
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof OrchestratorError);
+      assert.equal(error.code, ErrorCode.WorkspaceFileMissing);
+      assert.equal(github.commits.length, 0);
+      return true;
+    }
+  );
+});
+
+test("runtime lifecycle fails before GitHub writes when base branch sha is missing", async () => {
+  const fixture = createGitWorkspaceFixture({
+    repoName: repo.name,
+    issue: issue.number,
+    issueTitle: issue.title
+  });
+  const database = openStateDatabase();
+  migrateStateDatabase(database);
+  const github = new FakeGitHubApiAdapter();
+
+  await assert.rejects(
+    () =>
+      runIssueLifecycle({
+        database,
+        github,
+        agents: lifecycleAgents({
+          seedWorkspace: (workspacePath) => seedWorkspaceFile(workspacePath, "docs/example.md", "updated\n")
+        }),
+        event: {
+          schema: "agent-orchestrator.domain-event.v1",
+          event_type: DomainEventType.IssueAutopilotRequested,
+          delivery_id: "delivery-missing-base-sha",
+          repo: { owner: repo.owner, name: repo.name },
+          issue: issue.number,
+          actor: issue.author,
+          source: "webhook",
+          created_at: "2026-06-24T08:00:00.000Z"
+        },
+        repo: { ...repo, default_branch: "missing-branch" },
+        issue,
+        workspace: {
+          path: fixture.workspacePath,
+          branch: fixture.branch
+        },
+        workspaceRoot: fixture.workspaceRoot,
+        sourceRepoPath: fixture.sourceRepoPath,
+        policy,
+        policySummary: "docs policy",
+        now: new Date("2026-06-24T08:00:00.000Z")
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof OrchestratorError);
+      assert.equal(error.code, ErrorCode.WorkspacePrepareFailed);
+      assert.equal(github.branches.length, 0);
+      assert.equal(github.commits.length, 0);
+      return true;
+    }
+  );
+});
+
+test("dispatchIssueWork records registered last_error for workspace failures", async () => {
+  const fixture = createGitWorkspaceFixture({
+    repoName: repo.name,
+    issue: issue.number,
+    issueTitle: issue.title
+  });
+  const database = openStateDatabase();
+  migrateStateDatabase(database);
+  const github = new FakeGitHubApiAdapter();
+  const lifecycleInput = {
+    database,
+    github,
+    agents: lifecycleAgents({
+      seedWorkspace: (workspacePath) => {
+        seedWorkspaceFile(workspacePath, "docs/example.md", "updated\n");
+        runGit(workspacePath, ["add", "docs/example.md"]);
+        unlinkSync(join(workspacePath, "docs/example.md"));
+      }
+    }),
+    event: {
+      schema: "agent-orchestrator.domain-event.v1" as const,
+      event_type: DomainEventType.IssueAutopilotRequested,
+      delivery_id: "delivery-dispatch-last-error",
+      repo: { owner: repo.owner, name: repo.name },
+      issue: issue.number,
+      actor: issue.author,
+      source: "webhook" as const,
+      created_at: "2026-06-24T08:00:00.000Z"
+    },
+    repo,
+    issue,
+    workspace: {
+      path: fixture.workspacePath,
+      branch: fixture.branch
+    },
+    workspaceRoot: fixture.workspaceRoot,
+    sourceRepoPath: fixture.sourceRepoPath,
+    policy,
+    policySummary: "docs policy",
+    now: new Date("2026-06-24T08:00:00.000Z")
+  };
+
+  await assert.rejects(
+    () => dispatchIssueWork(buildDispatchInput(lifecycleInput, lifecycleInput.agents, "label")),
+    (error: unknown) => {
+      assert.ok(error instanceof OrchestratorError);
+      assert.equal(error.code, ErrorCode.WorkspaceFileMissing);
+      return true;
+    }
+  );
+
+  const snapshot = getWorkflowRunSnapshot(database, { runId: "run_octo_repo_issue_123" });
+  assert.equal(snapshot?.run.last_error_code, ErrorCode.WorkspaceFileMissing);
+  assert.match(snapshot?.run.last_error_message ?? "", /missing from controlled workspace/);
 });
 
 test("runtime lifecycle commits actual workspace diff evidence", async () => {

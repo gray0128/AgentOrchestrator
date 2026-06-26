@@ -34,10 +34,10 @@
 | `LOCAL_QUERY_INVALID` | No | No | Local UI query parameters are missing or malformed. |
 | `LOCAL_DB_UNAVAILABLE` | Yes | No | SQLite file is missing or unreadable for local UI reads. |
 | `WORKSPACE_PATH_ESCAPE` | No | Yes | Workspace path or branch does not stay under the configured workspace root/plan. |
-| `WORKSPACE_PREPARE_FAILED` | No | Yes | Controlled worktree preparation failed. |
+| `WORKSPACE_PREPARE_FAILED` | No | Yes | Controlled worktree preparation failed, including unresolved base branch sha. Blocks GitHub branch/commit writes. |
 | `WORKSPACE_DIFF_EMPTY` | No | Yes | Implementer worktree has no actual git diff. |
 | `WORKSPACE_DIFF_MISMATCH` | No | Yes | Agent `changed_files` do not match actual git diff. |
-| `WORKSPACE_FILE_MISSING` | No | Yes | A file from actual git diff is missing from the controlled workspace. |
+| `WORKSPACE_FILE_MISSING` | No | Yes | A file from actual git diff is missing from the controlled workspace. Blocks GitHub commit writes; must not synthesize placeholder file content. |
 
 ## Permission Actions
 
