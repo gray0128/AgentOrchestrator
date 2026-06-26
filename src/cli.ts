@@ -70,7 +70,7 @@ import {
   defaultWebhookMaxPayloadBytes,
   verifyWebhookSignature,
 } from "./webhooks/signature.ts";
-import { slugify } from "./workspace/manager.ts";
+import { createWorkspacePlan } from "./workspace/manager.ts";
 
 export type CliIo = {
   readonly stdout: (line: string) => void;
@@ -100,6 +100,7 @@ export type ServeRuntimeOptions = {
 export type ServeLifecycleOptions = {
   readonly agents: RuntimeLifecycleAgentsWithTriage;
   readonly repositories: readonly ServeLifecycleRepository[];
+  readonly workspaceRoot: string;
 };
 
 export type ServeLifecycleRepository = {
@@ -865,6 +866,7 @@ function buildServeRuntimeDependencies(
     lifecycle: {
       agents: buildProcessAgents(config),
       repositories,
+      workspaceRoot: resolve(config.workspaces.root),
     },
     policySummary: "live repo policy accepted",
   };
@@ -1270,6 +1272,7 @@ function buildDispatchContext(
   }
 
   const issue = buildIssueContext(event, payload);
+  const workspaceContext = buildWorkspaceContext(lifecycle.workspaceRoot, repository, issue);
   const lifecycleInput: RunIssueLifecycleInput = {
     database,
     github,
@@ -1277,7 +1280,9 @@ function buildDispatchContext(
     event,
     repo: repository.repo,
     issue,
-    workspace: buildWorkspaceContext(repository, issue),
+    workspace: workspaceContext.workspace,
+    workspaceRoot: workspaceContext.workspaceRoot,
+    sourceRepoPath: workspaceContext.sourceRepoPath,
     policy: repository.policy,
     policySummary: `${fallbackPolicySummary}: ${repository.policyPath}`,
   };
@@ -1350,13 +1355,28 @@ function extractIssueLabels(
 }
 
 function buildWorkspaceContext(
+  workspaceRoot: string,
   repository: ServeLifecycleRepository,
   issue: RuntimeLifecycleIssue,
-): RuntimeLifecycleWorkspace {
+): {
+  readonly workspace: RuntimeLifecycleWorkspace;
+  readonly workspaceRoot: string;
+  readonly sourceRepoPath: string;
+} {
+  const plan = createWorkspacePlan({
+    workspaceRoot,
+    repoName: repository.repo.name,
+    issue: issue.number,
+    issueTitle: issue.title,
+  });
   return {
-    path: repository.localPath,
-    branch: `agent/issue-${issue.number}-${slugify(issue.title)}`,
-    base_sha: readDefaultBranchSha(repository),
+    workspace: {
+      path: plan.path,
+      branch: plan.branch,
+      base_sha: readDefaultBranchSha(repository),
+    },
+    workspaceRoot,
+    sourceRepoPath: repository.localPath,
   };
 }
 

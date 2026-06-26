@@ -138,3 +138,8 @@ Rules:
 
 - Actual changed files come from git, not agent output.
 - Worktree paths must be under configured workspace root.
+- `createWorkspacePlan` is the single source of truth for implementer branch names and controlled workspace paths.
+- `validateControlledWorkspace` must run before implementer worktree preparation.
+- `prepareImplementerWorkspace` creates the implementer worktree from the configured source checkout.
+- `collectWorkspaceDiffEvidence` is the only source of changed file paths used for GitHub commit writes in full lifecycle.
+- Planner and plan reviewer read from `sourceRepoPath`; implementer writes only inside the prepared controlled worktree.

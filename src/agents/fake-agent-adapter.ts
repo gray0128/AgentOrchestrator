@@ -9,15 +9,19 @@ export class FakeAgentAdapter<Role extends AgentRole> implements AgentAdapter<Ro
   #result?: AgentResultByRole[Role];
   #failure?: { readonly errorCode: ErrorCode; readonly message: string };
 
+  readonly seedWorkspace?: (workspacePath: string) => void;
+
   constructor(input: {
     readonly role: Role;
     readonly result?: AgentResultByRole[Role];
     readonly failure?: { readonly errorCode: ErrorCode; readonly message: string };
     readonly metadata?: Partial<AgentProcessMetadata>;
+    readonly seedWorkspace?: (workspacePath: string) => void;
   }) {
     this.role = input.role;
     this.#result = input.result;
     this.#failure = input.failure;
+    this.seedWorkspace = input.seedWorkspace;
     this.metadata = {
       adapter: "fake",
       exitCode: input.failure ? 1 : 0,
@@ -28,6 +32,7 @@ export class FakeAgentAdapter<Role extends AgentRole> implements AgentAdapter<Ro
 
   async run(envelope: TaskEnvelope, prompt: string, workspacePath: string): Promise<AgentAdapterResult<Role>> {
     this.calls.push({ envelope, prompt, workspacePath });
+    this.seedWorkspace?.(workspacePath);
 
     if (this.#failure) {
       return {

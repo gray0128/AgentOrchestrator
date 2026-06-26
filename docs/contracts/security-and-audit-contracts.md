@@ -67,6 +67,13 @@ Untrusted content must not:
 
 Violations enter `blocked` with `PROMPT_INJECTION_POLICY_VIOLATION` when they affect execution.
 
+## Workspace Evidence
+
+- Implementer worktrees must be created under `workspaces.root` through Workspace Manager.
+- Full lifecycle must validate the planned workspace path and branch before implementer execution.
+- GitHub commit writes must use actual git diff evidence from the controlled worktree, not agent-declared `changed_files`.
+- Empty worktree diffs and agent/diff mismatches fail before any GitHub write side effects.
+
 ## Policy Blocks
 
 The following always block automatic merge:

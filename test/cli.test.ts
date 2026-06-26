@@ -18,6 +18,7 @@ import {
   startServeRuntime,
   createSignature,
 } from "../src/index.ts";
+import { createGitWorkspaceFixture, seedWorkspaceFile } from "./helpers/git-workspace-fixture.ts";
 
 test("help CLI lists productized setup commands", async () => {
   const output: string[] = [];
@@ -594,6 +595,11 @@ test("serve runtime accepts signed GitHub webhook intake when TCP bind is availa
 });
 
 test("serve runtime can run full lifecycle when lifecycle adapters are configured", async (context) => {
+  const fixture = createGitWorkspaceFixture({
+    repoName: "repo",
+    issue: 123,
+    issueTitle: "Low-risk docs update",
+  });
   const database = openStateDatabase();
   migrateStateDatabase(database);
   const github = new FakeGitHubApiAdapter();
@@ -613,10 +619,11 @@ test("serve runtime can run full lifecycle when lifecycle adapters are configure
       github,
       lifecycle: {
         agents: lifecycleAgents(),
+        workspaceRoot: fixture.workspaceRoot,
         repositories: [
           {
             repo: { owner: "octo", name: "repo", default_branch: "main" },
-            localPath: "/tmp/repo",
+            localPath: fixture.sourceRepoPath,
             policyPath: "/tmp/repo/.github/agent-orchestrator.json",
             policy: repoPolicy(),
           },
@@ -813,7 +820,7 @@ function repoPolicy() {
       },
     },
     paths: {
-      allow: ["src/**"],
+      allow: ["docs/**"],
       deny: [".github/**"],
       high_risk: ["package-lock.json"],
     },
@@ -864,6 +871,7 @@ function lifecycleAgents() {
     }),
     implementer: new FakeAgentAdapter({
       role: AgentRole.Implementer,
+      seedWorkspace: (workspacePath) => seedWorkspaceFile(workspacePath, "docs/example.md", "updated\n"),
       result: {
         schema: "agent-orchestrator.implementation-result.v1",
         role: AgentRole.Implementer,

@@ -10,6 +10,7 @@ import {
   openStateDatabase,
   runMockedEndToEndSmoke
 } from "../src/index.ts";
+import { seedWorkspaceFile } from "./helpers/git-workspace-fixture.ts";
 
 test("mocked end-to-end smoke completes a low-risk Issue lifecycle", async () => {
   const database = openStateDatabase();
@@ -58,6 +59,7 @@ test("mocked end-to-end smoke completes a low-risk Issue lifecycle", async () =>
       }),
       implementer: new FakeAgentAdapter({
         role: AgentRole.Implementer,
+        seedWorkspace: (workspacePath) => seedWorkspaceFile(workspacePath, "docs/example.md", "updated\n"),
         result: {
           schema: "agent-orchestrator.implementation-result.v1",
           role: AgentRole.Implementer,
@@ -163,6 +165,7 @@ test("mocked end-to-end smoke requires two independent PR reviewer approvals bef
       }),
       implementer: new FakeAgentAdapter({
         role: AgentRole.Implementer,
+        seedWorkspace: (workspacePath) => seedWorkspaceFile(workspacePath, "docs/example.md", "updated\n"),
         result: {
           schema: "agent-orchestrator.implementation-result.v1",
           role: AgentRole.Implementer,
