@@ -12,8 +12,8 @@
 | `LOCAL_CONFIG_INVALID` | No | Yes | Local config schema validation failed. |
 | `AGENT_SCHEMA_INVALID` | Limited | Yes | Agent output failed schema validation after retry. |
 | `TASK_ENVELOPE_INVALID` | No | Yes | Orchestrator produced invalid agent input. |
-| `POLICY_DENIED_PATH` | No | Yes | Changed path is denied by policy. |
-| `POLICY_HIGH_RISK_PATH` | No | Yes | Changed path requires human handling. |
+| `POLICY_DENIED_PATH` | No | Yes | Actual git diff includes a denied path or a path outside `paths.allow`. |
+| `POLICY_HIGH_RISK_PATH` | No | Yes | Actual git diff includes a high-risk path that requires human handling. |
 | `PROMPT_INJECTION_POLICY_VIOLATION` | No | Yes | Untrusted content attempted to override policy or secrets. |
 | `STALE_HEAD_SHA` | No | Maybe | Event or decision was for an old PR head. |
 | `CHECKS_FAILED` | Yes | No | Required checks or statuses failed. |

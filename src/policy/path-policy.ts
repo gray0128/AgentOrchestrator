@@ -12,6 +12,12 @@ export type PathPolicyDecision = {
   readonly outsideAllow: readonly string[];
 };
 
+export type PathPolicyBlock = {
+  readonly errorCode: "POLICY_DENIED_PATH" | "POLICY_HIGH_RISK_PATH";
+  readonly explanation: string;
+  readonly requiredAction: string;
+};
+
 export function evaluatePathPolicy(input: PathPolicyInput): PathPolicyDecision {
   const denied = input.changedFiles.filter((file) => matchesAny(file, input.deny));
   const highRisk = input.changedFiles.filter((file) => matchesAny(file, input.highRisk));
@@ -22,6 +28,44 @@ export function evaluatePathPolicy(input: PathPolicyInput): PathPolicyDecision {
     denied,
     highRisk,
     outsideAllow
+  };
+}
+
+export function resolvePathPolicyBlock(decision: PathPolicyDecision): PathPolicyBlock | null {
+  if (decision.allowed) {
+    return null;
+  }
+
+  const evidence: string[] = [];
+  if (decision.denied.length > 0) {
+    evidence.push(`Denied paths from actual git diff: ${decision.denied.join(", ")}`);
+  }
+  if (decision.highRisk.length > 0) {
+    evidence.push(`High-risk paths from actual git diff: ${decision.highRisk.join(", ")}`);
+  }
+  if (decision.outsideAllow.length > 0) {
+    evidence.push(`Paths outside allow rules from actual git diff: ${decision.outsideAllow.join(", ")}`);
+  }
+
+  if (decision.denied.length > 0) {
+    return {
+      errorCode: "POLICY_DENIED_PATH",
+      explanation: evidence.join("\n"),
+      requiredAction: "Remove denied path changes or update repo policy with explicit human approval."
+    };
+  }
+  if (decision.highRisk.length > 0) {
+    return {
+      errorCode: "POLICY_HIGH_RISK_PATH",
+      explanation: evidence.join("\n"),
+      requiredAction: "Review the high-risk path changes and remove needs-human when cleared."
+    };
+  }
+
+  return {
+    errorCode: "POLICY_DENIED_PATH",
+    explanation: evidence.join("\n"),
+    requiredAction: "Limit changes to allowed paths or update repo policy with explicit human approval."
   };
 }
 

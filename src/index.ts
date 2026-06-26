@@ -173,6 +173,7 @@ export {
 export {
   evaluatePathPolicy,
   matchesPathPattern,
+  resolvePathPolicyBlock,
 } from "./policy/path-policy.ts";
 export {
   loadRepoPolicy,
@@ -201,6 +202,7 @@ export type {
   BlockedHandlingResult,
 } from "./orchestrator/workflow-control.ts";
 export type {
+  PathPolicyBlock,
   PathPolicyDecision,
   PathPolicyInput,
 } from "./policy/path-policy.ts";

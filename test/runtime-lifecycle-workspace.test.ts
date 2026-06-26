@@ -8,6 +8,7 @@ import {
   FakeGitHubApiAdapter,
   OrchestratorError,
   WorkflowState,
+  getWorkflowRunSnapshot,
   migrateStateDatabase,
   openStateDatabase,
   runIssueLifecycle
@@ -258,6 +259,109 @@ test("runtime lifecycle fails when agent changed_files do not match actual git d
       return true;
     }
   );
+});
+
+async function assertPathPolicyBlockedLifecycle(input: {
+  readonly policy: typeof policy;
+  readonly changedFiles: readonly string[];
+  readonly seedWorkspace: (workspacePath: string) => void;
+  readonly expectedErrorCode: string;
+  readonly expectedEvidence: RegExp;
+}) {
+  const fixture = createGitWorkspaceFixture({
+    repoName: repo.name,
+    issue: issue.number,
+    issueTitle: issue.title
+  });
+  const database = openStateDatabase();
+  migrateStateDatabase(database);
+  const github = new FakeGitHubApiAdapter();
+
+  await assert.rejects(
+    () =>
+      runIssueLifecycle({
+        database,
+        github,
+        agents: lifecycleAgents({
+          changedFiles: input.changedFiles,
+          seedWorkspace: input.seedWorkspace
+        }),
+        event: {
+          schema: "agent-orchestrator.domain-event.v1",
+          event_type: DomainEventType.IssueAutopilotRequested,
+          delivery_id: `delivery-${input.expectedErrorCode}`,
+          repo: { owner: repo.owner, name: repo.name },
+          issue: issue.number,
+          actor: issue.author,
+          source: "webhook",
+          created_at: "2026-06-24T08:00:00.000Z"
+        },
+        repo,
+        issue,
+        workspace: {
+          path: fixture.workspacePath,
+          branch: fixture.branch
+        },
+        workspaceRoot: fixture.workspaceRoot,
+        sourceRepoPath: fixture.sourceRepoPath,
+        policy: input.policy,
+        policySummary: "path policy",
+        now: new Date("2026-06-24T08:00:00.000Z")
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof OrchestratorError);
+      assert.equal(error.code, input.expectedErrorCode);
+      return true;
+    }
+  );
+
+  const snapshot = getWorkflowRunSnapshot(database, { runId: "run_octo_repo_issue_123" });
+  assert.equal(snapshot?.run.state, WorkflowState.Blocked);
+  assert.equal(github.branches.length, 0);
+  assert.equal(github.commits.length, 0);
+  assert.equal(github.pullRequests.length, 0);
+  assert.equal(github.merges.length, 0);
+  const blockedComment = github.issueComments.find((comment) => comment.body.includes("## Automation Blocked"));
+  assert.ok(blockedComment);
+  assert.match(blockedComment?.body ?? "", /Reason: POLICY_/);
+  assert.match(blockedComment?.body ?? "", input.expectedEvidence);
+  assert.deepEqual(github.issueLabels.at(-1)?.labels, ["agent:autopilot", "agent:blocked", "needs-human"]);
+}
+
+test("runtime lifecycle blocks denied paths from actual git diff before GitHub writes", async () => {
+  await assertPathPolicyBlockedLifecycle({
+    policy,
+    changedFiles: [".github/workflows/ci.yml"],
+    seedWorkspace: (workspacePath) => seedWorkspaceFile(workspacePath, ".github/workflows/ci.yml", "workflow\n"),
+    expectedErrorCode: ErrorCode.PolicyDeniedPath,
+    expectedEvidence: /Denied paths from actual git diff: \.github\/workflows\/ci\.yml/
+  });
+});
+
+test("runtime lifecycle blocks high-risk paths from actual git diff before GitHub writes", async () => {
+  await assertPathPolicyBlockedLifecycle({
+    policy: {
+      ...policy,
+      paths: { allow: [], deny: [], high_risk: ["package-lock.json"] }
+    },
+    changedFiles: ["package-lock.json"],
+    seedWorkspace: (workspacePath) => seedWorkspaceFile(workspacePath, "package-lock.json", "{}\n"),
+    expectedErrorCode: ErrorCode.PolicyHighRiskPath,
+    expectedEvidence: /High-risk paths from actual git diff: package-lock\.json/
+  });
+});
+
+test("runtime lifecycle blocks outside-allow paths from actual git diff before GitHub writes", async () => {
+  await assertPathPolicyBlockedLifecycle({
+    policy: {
+      ...policy,
+      paths: { allow: ["docs/**"], deny: [], high_risk: [] }
+    },
+    changedFiles: ["src/main.ts"],
+    seedWorkspace: (workspacePath) => seedWorkspaceFile(workspacePath, "src/main.ts", "export {}\n"),
+    expectedErrorCode: ErrorCode.PolicyDeniedPath,
+    expectedEvidence: /Paths outside allow rules from actual git diff: src\/main\.ts/
+  });
 });
 
 test("runtime lifecycle commits actual workspace diff evidence", async () => {

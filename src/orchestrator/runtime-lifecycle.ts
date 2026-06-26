@@ -9,8 +9,12 @@ import type {
   TriageNextStep
 } from "../agents/adapter.ts";
 import type { RepoPolicy } from "../contracts/validation.ts";
+import { ErrorCode, OrchestratorError } from "../errors.ts";
+import type { ErrorCode as ErrorCodeValue } from "../errors.ts";
 import type { GitHubApiAdapter } from "../github/api.ts";
 import { createRequestHash } from "../github/request-hash.ts";
+import { evaluatePathPolicy, resolvePathPolicyBlock } from "../policy/path-policy.ts";
+import type { PathPolicyBlock } from "../policy/path-policy.ts";
 import { casUpdateRunState, getWorkflowRunSnapshot, recordIdempotentAction, repairWorkflowRunFromArtifacts } from "../state/sqlite-store.ts";
 import type { StateDatabase, WorkflowRunSnapshot } from "../state/sqlite-store.ts";
 import { WorkflowEvent, WorkflowState } from "../state/state-machine.ts";
@@ -22,6 +26,7 @@ import { renderPlanComment, renderPlanReviewComment, renderPrReviewComment } fro
 import { aggregateChecks, decideFixLoop, mapPrReviewVerdictToEvent } from "./pr-gate.ts";
 import { renderPullRequestBody } from "./pr-body.ts";
 import { advanceWebhookEvent, createIssueRunId } from "./webhook-runtime.ts";
+import { buildBlockedHandling } from "./workflow-control.ts";
 import {
   collectWorkspaceDiffEvidence,
   prepareImplementerWorkspace,
@@ -164,6 +169,16 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
   );
   const implementationProposal = implementationRun.result;
   const diffEvidence = collectWorkspaceDiffEvidence(preparedWorkspace.path, implementationProposal.changed_files);
+  const pathPolicyDecision = evaluatePathPolicy({
+    changedFiles: diffEvidence.changedFiles,
+    allow: input.policy.paths.allow,
+    deny: input.policy.paths.deny,
+    highRisk: input.policy.paths.high_risk
+  });
+  const pathPolicyBlock = resolvePathPolicyBlock(pathPolicyDecision);
+  if (pathPolicyBlock) {
+    await blockRunForPathPolicy(input, runId, pathPolicyBlock, now);
+  }
   const implementation = {
     ...implementationProposal,
     branch: preparedWorkspace.branch,
@@ -530,6 +545,67 @@ function baseEnvelope(
     expected_outputs: expectedOutputs,
     created_at: now.toISOString()
   };
+}
+
+async function blockRunForPathPolicy(
+  input: RunIssueLifecycleInput,
+  runId: string,
+  block: PathPolicyBlock,
+  now: Date
+): Promise<never> {
+  const errorCode = block.errorCode as ErrorCodeValue;
+  const blocked = buildBlockedHandling({
+    currentLabels: input.issue.labels,
+    runId,
+    issue: input.issue.number,
+    errorCode: block.errorCode,
+    explanation: block.explanation,
+    requiredAction: block.requiredAction
+  });
+  transition(
+    input.database,
+    runId,
+    WorkflowState.Implementing,
+    WorkflowState.Blocked,
+    null,
+    WorkflowEvent.PolicyBlock,
+    now
+  );
+  const blockedCommentResult = await input.github.createOrUpdateIssueComment({
+    repo: input.event.repo,
+    issue: input.issue.number,
+    body: blocked.comment,
+    idempotencyKey: `${runId}:policy:block-comment`,
+    requestHash: createRequestHash({ runId, comment: blocked.comment })
+  });
+  recordCompletedAction(
+    input.database,
+    runId,
+    "create_issue_comment",
+    "issue",
+    String(input.issue.number),
+    blockedCommentResult.responseRef,
+    { runId, blockedComment: blocked.comment },
+    now
+  );
+  const labelsResult = await input.github.setIssueLabels({
+    repo: input.event.repo,
+    issue: input.issue.number,
+    labels: [...blocked.labels],
+    idempotencyKey: `${runId}:policy:block-labels`,
+    requestHash: createRequestHash({ runId, labels: blocked.labels })
+  });
+  recordCompletedAction(
+    input.database,
+    runId,
+    "set_issue_labels",
+    "issue",
+    String(input.issue.number),
+    labelsResult.responseRef,
+    { runId, labels: blocked.labels },
+    now
+  );
+  throw new OrchestratorError(errorCode, block.explanation);
 }
 
 function transition(
