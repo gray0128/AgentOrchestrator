@@ -75,25 +75,7 @@ export function prepareImplementerWorkspace(input: PrepareImplementerWorkspaceIn
   const plan = createWorkspacePlan(input);
   mkdirSync(input.workspaceRoot, { recursive: true });
   const baseSha = resolveBaseSha(input.sourceRepoPath, input.baseBranch);
-  const existingWorktree = resolveRegisteredWorktree(input.sourceRepoPath, plan.path);
-  if (existingWorktree) {
-    if (existingWorktree.branch !== plan.branch) {
-      throw new OrchestratorError(
-        ErrorCode.WorkspacePrepareFailed,
-        `Workspace path is already bound to branch ${existingWorktree.branch}, expected ${plan.branch}`
-      );
-    }
-    return {
-      ...plan,
-      baseSha
-    };
-  }
-  if (existsSync(plan.path)) {
-    throw new OrchestratorError(
-      ErrorCode.WorkspacePrepareFailed,
-      `Workspace path already exists outside git worktree management: ${plan.path}`
-    );
-  }
+  removeExistingWorktree(input.sourceRepoPath, plan.path, plan.branch);
   runGitOrThrow(input.sourceRepoPath, ["worktree", "add", "-B", plan.branch, plan.path, baseSha], "prepare implementer worktree");
   return {
     ...plan,
@@ -220,13 +202,35 @@ function resolveBaseSha(sourceRepoPath: string, baseBranch: string): string {
   );
 }
 
-function resolveRegisteredWorktree(
+// Single-process orchestrator assumption: path existence and worktree registration are checked immediately before remove/add.
+function removeExistingWorktree(sourceRepoPath: string, workspacePath: string, expectedBranch: string): void {
+  if (!existsSync(workspacePath)) {
+    return;
+  }
+
+  const resolvedPath = normalizeComparablePath(workspacePath);
+  const existingWorktree = findRegisteredWorktree(sourceRepoPath, resolvedPath);
+  if (!existingWorktree) {
+    throw new OrchestratorError(
+      ErrorCode.WorkspacePrepareFailed,
+      `Workspace path already exists outside git worktree management: ${workspacePath}`
+    );
+  }
+  if (existingWorktree.branch !== expectedBranch) {
+    throw new OrchestratorError(
+      ErrorCode.WorkspacePrepareFailed,
+      `Workspace path is already bound to branch ${existingWorktree.branch}, expected ${expectedBranch}`
+    );
+  }
+  runGitOrThrow(sourceRepoPath, ["worktree", "remove", "--force", workspacePath], "remove existing implementer worktree");
+}
+
+function findRegisteredWorktree(
   sourceRepoPath: string,
   workspacePath: string
 ): { readonly path: string; readonly branch: string } | undefined {
-  const resolvedPath = normalizeComparablePath(workspacePath);
   for (const worktree of parseWorktreePorcelain(runGit(sourceRepoPath, ["worktree", "list", "--porcelain"]).stdout)) {
-    if (worktree.path === resolvedPath) {
+    if (worktree.path === workspacePath) {
       return worktree;
     }
   }

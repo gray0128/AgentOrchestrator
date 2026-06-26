@@ -74,6 +74,7 @@ Violations enter `blocked` with `PROMPT_INJECTION_POLICY_VIOLATION` when they af
 - GitHub commit writes must use actual git diff evidence from the controlled worktree, not agent-declared `changed_files`.
 - Empty worktree diffs and agent/diff mismatches fail before any GitHub write side effects.
 - Implementer must not write outside the prepared worktree; path reads are checked against both `workspaces.root` and the worktree directory.
+- Each implementer prepare removes and recreates the planned git worktree from the current default-branch head. Prior uncommitted worktree state is not preserved across implementer re-entry.
 
 ## Policy Blocks
 

@@ -1,4 +1,6 @@
 import { strict as assert } from "node:assert";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -99,7 +101,7 @@ test("workspace manager collects staged changes against HEAD", () => {
   assert.deepEqual(diff.map((file) => file.path), ["docs/example.md"]);
 });
 
-test("workspace manager reuses an existing registered worktree for the same branch", () => {
+test("workspace manager recreates an existing worktree from current main head", () => {
   const fixture = createGitWorkspaceFixture({
     repoName: "repo",
     issue: 123,
@@ -114,8 +116,14 @@ test("workspace manager reuses an existing registered worktree for the same bran
     baseBranch: "main"
   });
   seedWorkspaceFile(prepared.path, "docs/example.md", "draft\n");
+  runGit(prepared.path, ["add", "docs/example.md"]);
+  runGit(prepared.path, ["commit", "-m", "draft"]);
 
-  const reused = prepareImplementerWorkspace({
+  writeFileSync(join(fixture.sourceRepoPath, "docs/main-only.md"), "from-main\n");
+  runGit(fixture.sourceRepoPath, ["add", "docs/main-only.md"]);
+  runGit(fixture.sourceRepoPath, ["commit", "-m", "advance main"]);
+
+  const recreated = prepareImplementerWorkspace({
     workspaceRoot: fixture.workspaceRoot,
     repoName: "repo",
     issue: 123,
@@ -124,8 +132,14 @@ test("workspace manager reuses an existing registered worktree for the same bran
     baseBranch: "main"
   });
 
-  assert.equal(reused.path, prepared.path);
-  assert.equal(reused.branch, prepared.branch);
+  assert.equal(recreated.path, prepared.path);
+  assert.equal(recreated.branch, prepared.branch);
+  assert.notEqual(recreated.baseSha, prepared.baseSha);
+  assert.throws(() => collectWorkspaceDiffEvidence(recreated.path, ["docs/example.md"]), (error: unknown) => {
+    assert.ok(error instanceof OrchestratorError);
+    assert.equal(error.code, ErrorCode.WorkspaceDiffEmpty);
+    return true;
+  });
 });
 
 test("readDiffFileContents rejects files outside workspaces.root", () => {
