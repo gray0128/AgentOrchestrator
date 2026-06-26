@@ -227,7 +227,7 @@ ao init-config \
 - `github.auth.private_key_env`：保存 GitHub App private key 内容的环境变量名。
 - `github.auth.installation_id_env`：保存 GitHub App installation ID 的环境变量名。
 - `database.path`：本地 SQLite 状态库路径，用于 run、lease、幂等记录和状态转移。
-- `workspaces.root`：受控 agent 工作区根目录。
+- `workspaces.root`：受控 agent 工作区根目录。full lifecycle 会在 implementer 阶段基于该目录创建独立 worktree，并以实际 git diff 作为提交证据。若同一路径已有 worktree，会先 `git worktree remove --force` 再从当前默认分支 head 重建，以保证 `base_sha` 与 diff 证据一致；未提交的本地中间状态不会保留。
 - `workspaces.cleanup_after_days`：工作区清理保留天数。
 - `repositories[].owner` / `repositories[].name`：目标 GitHub 仓库身份。
 - `repositories[].local_path`：目标仓库本地 checkout 路径，Orchestrator 会在这里读取策略和准备工作区上下文。
@@ -599,7 +599,7 @@ ao live-check --config config/local.json
 - `docs/contracts/`：状态、数据、安全、schema 和 artifact 契约。
 - `docs/api-design/`：内部 API 和 CLI 设计。
 - `docs/development-plan/`：开发计划和工程规则。
-- `docs/评估报告/下一阶段任务计划.md`：从评估报告整理出的后续 milestone / issue 候选计划。
+- `docs/development-plan/下一阶段任务计划.md`：从评估报告整理出的后续 milestone / issue 候选计划。
 
 ## 迭代控制
 

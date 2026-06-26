@@ -180,9 +180,14 @@ export {
 } from "./policy/repo-policy-loader.ts";
 export {
   assertPathUnderRoot,
+  collectGitDiff,
+  collectWorkspaceDiffEvidence,
   createWorkspacePlan,
   parseGitNameStatus,
+  prepareImplementerWorkspace,
+  readDiffFileContents,
   slugify,
+  validateControlledWorkspace,
 } from "./workspace/manager.ts";
 export type {
   PlanningStartedCommentInput,
@@ -204,7 +209,11 @@ export type {
   ManagedRepositoryConfig,
 } from "./policy/repo-policy-loader.ts";
 export type {
+  ControlledWorkspaceInput,
   DiffFile,
+  PreparedImplementerWorkspace,
+  PrepareImplementerWorkspaceInput,
+  WorkspaceDiffEvidence,
   WorkspacePlan,
   WorkspacePlanInput,
 } from "./workspace/manager.ts";

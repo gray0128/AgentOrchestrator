@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-
 import { AgentRole } from "../agents/adapter.ts";
 import type {
   AgentAdapter,
@@ -25,6 +22,12 @@ import { renderPlanComment, renderPlanReviewComment, renderPrReviewComment } fro
 import { aggregateChecks, decideFixLoop, mapPrReviewVerdictToEvent } from "./pr-gate.ts";
 import { renderPullRequestBody } from "./pr-body.ts";
 import { advanceWebhookEvent, createIssueRunId } from "./webhook-runtime.ts";
+import {
+  collectWorkspaceDiffEvidence,
+  prepareImplementerWorkspace,
+  readDiffFileContents,
+  validateControlledWorkspace
+} from "../workspace/manager.ts";
 
 export type RuntimeLifecycleAgents = {
   readonly planner: AgentAdapter<typeof AgentRole.Planner>;
@@ -62,6 +65,8 @@ export type RunIssueLifecycleInput = {
   readonly repo: RuntimeLifecycleRepo;
   readonly issue: RuntimeLifecycleIssue;
   readonly workspace: RuntimeLifecycleWorkspace;
+  readonly workspaceRoot: string;
+  readonly sourceRepoPath: string;
   readonly policy: RepoPolicy;
   readonly policySummary: string;
   readonly now?: Date;
@@ -96,7 +101,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
   }
   const runId = accepted.runId;
 
-  const planRun = await runAgent(input.agents.planner, plannerEnvelope(input, runId, now), "Create a low-risk plan.", input.workspace.path);
+  const planRun = await runAgent(input.agents.planner, plannerEnvelope(input, runId, now), "Create a low-risk plan.", input.sourceRepoPath);
   const planComment = renderPlanComment(planRun.result, attributionFromMetadata(planRun.metadata, AgentRole.Planner));
   const planCommentResult = await input.github.createOrUpdateIssueComment({
     repo: input.event.repo,
@@ -115,7 +120,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     input.agents.planReviewer,
     planReviewerEnvelope(input, runId, planRun.result, planCommentResult.responseRef, now),
     "Review the plan.",
-    input.workspace.path
+    input.sourceRepoPath
   );
   const planReviewComment = renderPlanReviewComment(
     planReviewRun.result,
@@ -134,28 +139,52 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
   }, now);
   transition(input.database, runId, WorkflowState.PlanReviewing, WorkflowState.Implementing, null, WorkflowEvent.AgentPlanReviewApproved, now);
 
+  validateControlledWorkspace({
+    workspaceRoot: input.workspaceRoot,
+    repoName: input.repo.name,
+    issue: input.issue.number,
+    issueTitle: input.issue.title,
+    workspacePath: input.workspace.path,
+    branch: input.workspace.branch
+  });
+  const preparedWorkspace = prepareImplementerWorkspace({
+    workspaceRoot: input.workspaceRoot,
+    repoName: input.repo.name,
+    issue: input.issue.number,
+    issueTitle: input.issue.title,
+    sourceRepoPath: input.sourceRepoPath,
+    baseBranch: input.repo.default_branch
+  });
+
   const implementationRun = await runAgent(
     input.agents.implementer,
-    implementerEnvelope(input, runId, planRun.result, planCommentResult.responseRef, now),
+    implementerEnvelope(input, runId, planRun.result, planCommentResult.responseRef, preparedWorkspace, now),
     "Implement the approved plan.",
-    input.workspace.path
+    preparedWorkspace.path
   );
-  const implementation = implementationRun.result;
+  const implementationProposal = implementationRun.result;
+  const diffEvidence = collectWorkspaceDiffEvidence(preparedWorkspace.path, implementationProposal.changed_files);
+  const implementation = {
+    ...implementationProposal,
+    branch: preparedWorkspace.branch,
+    base_sha: preparedWorkspace.baseSha,
+    changed_files: diffEvidence.changedFiles
+  };
   await input.github.createBranch({
     repo: input.event.repo,
     branch: implementation.branch,
-    baseSha: implementation.base_sha ?? input.workspace.base_sha ?? "base-sha",
+    baseSha: implementation.base_sha,
     idempotencyKey: `${runId}:implementer:create-branch`,
     requestHash: createRequestHash({ runId, branch: implementation.branch })
   });
   const commit = await input.github.commitChanges({
     repo: input.event.repo,
     branch: implementation.branch,
-    expectedHeadSha: implementation.base_sha ?? input.workspace.base_sha ?? "base-sha",
+    expectedHeadSha: implementation.base_sha,
     message: `Implement issue #${input.issue.number}`,
-    files: implementation.changed_files.map((path) => ({ path, content: readChangedFile(input.workspace.path, path) })),
+    files: readDiffFileContents(input.workspaceRoot, preparedWorkspace.path, diffEvidence.changedFiles),
     idempotencyKey: `${runId}:implementer:commit`,
-    requestHash: createRequestHash({ runId, files: implementation.changed_files })
+    requestHash: createRequestHash({ runId, files: diffEvidence.changedFiles })
   });
   const implementerAttribution = attributionFromMetadata(implementationRun.metadata, AgentRole.Implementer);
   const prDraft = renderPullRequestBody(
@@ -337,7 +366,7 @@ async function runRequiredPrReviews(input: {
       reviewer,
       prReviewerEnvelope(input.input, input.runId, input.pr, input.headSha, input.now),
       `Review the PR independently as reviewer ${index + 1}.`,
-      input.input.workspace.path
+      input.input.sourceRepoPath
     );
     const prReview = prReviewRun.result;
     const prReviewEvent = mapPrReviewVerdictToEvent(prReview, input.headSha);
@@ -432,9 +461,27 @@ function planReviewerEnvelope(input: RunIssueLifecycleInput, runId: string, plan
   };
 }
 
-function implementerEnvelope(input: RunIssueLifecycleInput, runId: string, plan: PlanResult, planCommentUrl: string, now: Date): TaskEnvelope {
+function implementerEnvelope(
+  input: RunIssueLifecycleInput,
+  runId: string,
+  plan: PlanResult,
+  planCommentUrl: string,
+  preparedWorkspace: { readonly path: string; readonly branch: string; readonly baseSha: string },
+  now: Date
+): TaskEnvelope {
   return {
-    ...baseEnvelope(input, runId, AgentRole.Implementer, { commit: true, pr_body: true, changed_files: true, test_summary: true }, now),
+    ...baseEnvelope(
+      input,
+      runId,
+      AgentRole.Implementer,
+      { commit: true, pr_body: true, changed_files: true, test_summary: true },
+      now,
+      {
+        path: preparedWorkspace.path,
+        branch: preparedWorkspace.branch,
+        base_sha: preparedWorkspace.baseSha
+      }
+    ),
     plan: {
       comment_url: planCommentUrl,
       summary: plan.summary,
@@ -462,7 +509,8 @@ function baseEnvelope(
   runId: string,
   role: AgentRole,
   expectedOutputs: TaskEnvelope["expected_outputs"],
-  now: Date
+  now: Date,
+  workspace: RuntimeLifecycleWorkspace = input.workspace
 ): TaskEnvelope {
   return {
     schema: "agent-orchestrator.task-envelope.v1",
@@ -470,7 +518,7 @@ function baseEnvelope(
     run_id: runId,
     repo: input.repo,
     issue: input.issue,
-    workspace: input.workspace,
+    workspace,
     policy: {
       allow_write: input.policy.paths.allow,
       deny_write: input.policy.paths.deny,
@@ -530,14 +578,6 @@ function recordCompletedAction(
     status: "completed",
     now
   });
-}
-
-function readChangedFile(workspacePath: string, filePath: string): string {
-  try {
-    return readFileSync(resolve(join(workspacePath, filePath)), "utf8");
-  } catch {
-    return "automation\n";
-  }
 }
 
 function extractPrNumber(responseRef: string): number | undefined {

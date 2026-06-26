@@ -28,6 +28,11 @@ export const ErrorCode = {
   TaskEnvelopeInvalid: "TASK_ENVELOPE_INVALID",
   WebhookSignatureInvalid: "WEBHOOK_SIGNATURE_INVALID",
   WebhookPayloadInvalid: "WEBHOOK_PAYLOAD_INVALID",
+  WorkspaceDiffEmpty: "WORKSPACE_DIFF_EMPTY",
+  WorkspaceDiffMismatch: "WORKSPACE_DIFF_MISMATCH",
+  WorkspaceFileMissing: "WORKSPACE_FILE_MISSING",
+  WorkspacePathEscape: "WORKSPACE_PATH_ESCAPE",
+  WorkspacePrepareFailed: "WORKSPACE_PREPARE_FAILED",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

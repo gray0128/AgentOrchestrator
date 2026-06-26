@@ -138,3 +138,18 @@ Rules:
 
 - Actual changed files come from git, not agent output.
 - Worktree paths must be under configured workspace root.
+- `createWorkspacePlan` is the single source of truth for implementer branch names and controlled workspace paths.
+- `validateControlledWorkspace` must run before implementer worktree preparation.
+- `prepareImplementerWorkspace` creates the implementer worktree from the configured source checkout.
+- If the planned worktree path already exists, Workspace Manager removes the registered git worktree with `git worktree remove --force` and recreates it from the current default-branch head. Reuse of prior local state is intentionally out of scope for M8-01.
+- `collectWorkspaceDiffEvidence` is the only source of changed file paths used for GitHub commit writes in full lifecycle.
+- Planner and plan reviewer read from `sourceRepoPath`; implementer writes only inside the prepared controlled worktree.
+
+### Worktree Recreate Tradeoff (M8-01)
+
+| Choice | Benefit | Cost |
+| --- | --- | --- |
+| Recreate on each implementer prepare | `base_sha`, worktree `HEAD`, and git diff evidence stay aligned with current main | Uncommitted or local-only implementer state is discarded when the same issue re-enters implementer |
+| Reuse existing worktree | Preserves local working tree between retries | Requires branch-tip-locked `base_sha` and fix-loop resume semantics; deferred until a dedicated recovery issue |
+
+MVP uses recreate. Fix-loop resume that depends on preserved local worktree state is not supported until a later milestone defines explicit reuse rules.
