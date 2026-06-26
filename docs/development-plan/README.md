@@ -24,7 +24,7 @@ Out of scope for MVP:
 2. `docs/contracts/`
 3. `docs/api-design/`
 4. `docs/development-plan/`
-5. `docs/progress/`
+5. GitHub milestones, issues, and PRs for live iteration status.
 6. Decision records created during implementation.
 
 If implementation reveals a conflict, update the contract or decision record before relying on the changed behavior in code.
@@ -32,7 +32,7 @@ If implementation reveals a conflict, update the contract or decision record bef
 ## Task Start Flow
 
 1. Check repo root, branch, dirty files, and whether `.codegraph/` exists.
-2. Read `docs/progress/tasks.md` and select one `Not started` or `Designing` task.
+2. Inspect the current GitHub milestone/issues and select one open, independently verifiable issue.
 3. Read relevant contract files and schemas.
 4. State the task boundary, expected file surface, out-of-scope items, and verification.
 5. Run impact analysis before touching shared contracts, state, schemas, policies, or security semantics.
@@ -40,11 +40,10 @@ If implementation reveals a conflict, update the contract or decision record bef
 ## Task Close Flow
 
 1. Run the verification required by `verification-and-acceptance.md`.
-2. Update `docs/progress/tasks.md`.
-3. Update `docs/progress/contract-checklist.md` for any contract touched.
-4. Update `docs/progress/test-acceptance-log.md` with exact commands and outcome.
-5. Update `docs/progress/blockers.md` if work is blocked or only partially verified.
-6. Review the diff for scope, generated files, local caches, and secrets.
+2. Record exact commands, outcomes, and residual risk in the GitHub issue or PR.
+3. Update contract, API, README, operations, or decision-record docs only when the implementation changes those surfaces.
+4. Record blockers in the GitHub issue instead of local progress files.
+5. Review the diff for scope, generated files, local caches, and secrets.
 
 ## First Implementation Order
 

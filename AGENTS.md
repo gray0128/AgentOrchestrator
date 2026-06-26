@@ -1,4 +1,4 @@
-# AGENT.md
+# AGENTS.md
 
 ## Project Positioning
 
@@ -66,21 +66,23 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## Project Control Loop
 
-- Read `github-native-agent-orchestrator-自动处理-issue-方案.md`, `docs/progress/tasks.md`, `docs/development-plan/README.md`, and the relevant contract files before implementation.
-- When the user says "继续" or "继续开发", infer the next unfinished task from `docs/progress/tasks.md`.
+- Read `github-native-agent-orchestrator-自动处理-issue-方案.md`, `docs/development-plan/README.md`, and the relevant contract/API files before implementation.
+- Iteration control lives in GitHub milestones, issues, and PRs. Do not use local progress files as the task source of truth.
+- When the user says "继续" or "继续开发", inspect the current GitHub milestones/issues and choose the next unfinished issue, unless the user names a specific issue or PR.
+- If GitHub issues have not been created yet, use `docs/评估报告/下一阶段任务计划.md` only as an issue-seeding plan, not as live task status.
 - Keep each task to one independently verifiable slice.
 - Before editing shared schemas, state-machine behavior, API adapter contracts, policy rules, security semantics, or persistence models, update the relevant contract document first.
 - If a `.codegraph/` directory exists, use CodeGraph before grep/find or broad file reads when locating code. If it does not exist, use targeted `rg`.
 - For GitHub repository operations, use GitHub-native APIs or tooling. For CNB repositories, use `cnb` CLI.
 - For web prototype or UI/UX verification, prefer Chrome-based verification when available.
-- At task closeout, run the required verification, update `docs/progress/test-acceptance-log.md`, update contract checklist entries, and record blockers instead of marking incomplete work as done.
+- At task closeout, run the required verification and record the result in the GitHub issue/PR. Update design, API, contract, README, or operations docs only when the PR changes those surfaces.
 
 ## Document Priority
 
 1. Product and architecture plan: `github-native-agent-orchestrator-自动处理-issue-方案.md`.
 2. Contract layer: `docs/contracts/` and `docs/api-design/`.
 3. Development rules: `docs/development-plan/`.
-4. Live status: `docs/progress/`.
+4. GitHub milestones/issues/PRs for live iteration status.
 5. Decision records created during implementation.
 
 If implementation conflicts with these documents, update the design or decision record before changing code that depends on the new interpretation.

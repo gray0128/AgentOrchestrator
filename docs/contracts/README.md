@@ -43,4 +43,4 @@ Implementation can start when:
 - The schemas parse as valid JSON.
 - The state machine has explicit transition rules.
 - API adapter methods name their idempotency and error behavior.
-- Progress trackers contain real MVP tasks, not empty templates.
+- GitHub milestones/issues contain concrete acceptance criteria for the work being started.

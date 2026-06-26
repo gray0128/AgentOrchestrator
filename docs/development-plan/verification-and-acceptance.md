@@ -2,7 +2,7 @@
 
 ## Baseline
 
-Every task must run the narrowest meaningful verification for the changed surface and record exact commands in `docs/progress/test-acceptance-log.md`.
+Every task must run the narrowest meaningful verification for the changed surface and record exact commands and outcomes in the GitHub issue or PR.
 
 ## Required Verification By Surface
 

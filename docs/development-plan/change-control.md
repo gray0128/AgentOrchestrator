@@ -46,7 +46,7 @@ Alternatives considered:
 
 ## Freeze Policy
 
-- Before M0 starts, contracts may change freely if trackers are updated.
-- After a milestone starts, changed contracts require task and checklist updates.
+- Before a milestone starts, contracts may change freely if the relevant GitHub issue/PR records the compatibility impact.
+- After a milestone starts, changed contracts require updated acceptance criteria in the GitHub issue/PR.
 - After M3 starts, agent task/result schemas are considered integration-facing.
 - After M5 starts, state values, error codes, and merge semantics require decision records for breaking changes.

@@ -29,5 +29,5 @@ When the implementation language and validation library are selected:
 Any schema change must update:
 
 - The corresponding contract document.
-- `docs/progress/contract-checklist.md`.
+- The GitHub issue/PR acceptance notes and compatibility impact.
 - Tests or fixtures proving old compatible data still works, unless a breaking decision record exists.

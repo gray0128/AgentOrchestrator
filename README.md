@@ -599,4 +599,14 @@ ao live-check --config config/local.json
 - `docs/contracts/`：状态、数据、安全、schema 和 artifact 契约。
 - `docs/api-design/`：内部 API 和 CLI 设计。
 - `docs/development-plan/`：开发计划和工程规则。
-- `docs/progress/`：任务、里程碑、契约清单、阻塞和验收记录。
+- `docs/评估报告/下一阶段任务计划.md`：从评估报告整理出的后续 milestone / issue 候选计划。
+
+## 迭代控制
+
+后续迭代状态以 GitHub 为准：
+
+- GitHub milestones 管理阶段目标。
+- GitHub issues 管理可独立验收的任务切片。
+- GitHub PRs 承载实现、验证结果、讨论和合并记录。
+
+本仓库不再维护本地 `docs/progress/` 任务台账。设计文档、API 文档、契约文档、README 和操作手册仍随相关 PR 正常更新。
