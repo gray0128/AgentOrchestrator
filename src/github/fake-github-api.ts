@@ -11,11 +11,15 @@ import type {
   CloseIssueInput,
   MergePullRequestInput,
   MergePullRequestResult,
+  PullRequestContextReadResult,
   PullRequestWriteInput,
   ReadCheckSummaryInput,
+  ReadPullRequestContextInput,
   SetIssueLabelsInput,
   SubmitPullRequestReviewInput
 } from "./api.ts";
+
+export type StoredPullRequestContext = Omit<PullRequestContextReadResult, "checks">;
 
 export type StoredIssueComment = IssueCommentWriteInput & {
   readonly responseRef: string;
@@ -32,6 +36,7 @@ export class FakeGitHubApiAdapter implements GitHubApiAdapter {
   readonly deletedBranches: DeleteBranchInput[] = [];
   readonly closedIssues: CloseIssueInput[] = [];
   readonly checkSummaries = new Map<string, CheckSummaryReadResult>();
+  readonly pullRequestContexts = new Map<string, StoredPullRequestContext>();
   readonly commentsByIdempotencyKey = new Map<string, StoredIssueComment>();
   readonly refsByIdempotencyKey = new Map<string, GitHubWriteResult | CommitChangesResult | MergePullRequestResult>();
 
@@ -120,6 +125,28 @@ export class FakeGitHubApiAdapter implements GitHubApiAdapter {
     );
   }
 
+  async readPullRequestContext(input: ReadPullRequestContextInput): Promise<PullRequestContextReadResult> {
+    const key = `${input.repo.owner}/${input.repo.name}#${input.pr}`;
+    const stored = this.pullRequestContexts.get(key);
+    const headSha = stored?.headSha ?? defaultHeadShaFromCheckSummaries(this.checkSummaries, input) ?? "fake-head";
+    const checks = await this.readCheckSummary({
+      repo: input.repo,
+      pr: input.pr,
+      headSha,
+      requiredChecks: input.requiredChecks
+    });
+    return {
+      responseRef: stored?.responseRef ?? `pr:${input.pr}:${headSha}`,
+      pr: input.pr,
+      headSha,
+      mergeable: stored?.mergeable ?? true,
+      mergeableState: stored?.mergeableState ?? "clean",
+      labels: stored?.labels ?? [],
+      approvedReviewCount: stored?.approvedReviewCount ?? 1,
+      checks
+    };
+  }
+
   async mergePullRequest(input: MergePullRequestInput): Promise<MergePullRequestResult> {
     const existing = this.refsByIdempotencyKey.get(input.idempotencyKey) as MergePullRequestResult | undefined;
     if (existing) {
@@ -156,4 +183,27 @@ export class FakeGitHubApiAdapter implements GitHubApiAdapter {
     this.refsByIdempotencyKey.set(input.idempotencyKey, result);
     return result;
   }
+}
+
+function defaultHeadShaFromCheckSummaries(
+  checkSummaries: Map<string, CheckSummaryReadResult>,
+  input: ReadPullRequestContextInput
+): string | undefined {
+  const prefix = `${input.repo.owner}/${input.repo.name}#${input.pr}@`;
+  const matches: CheckSummaryReadResult[] = [];
+  for (const [key, summary] of checkSummaries) {
+    if (key.startsWith(prefix)) {
+      matches.push(summary);
+    }
+  }
+  if (matches.length === 0) {
+    return undefined;
+  }
+  if (matches.length === 1) {
+    return matches[0]?.headSha;
+  }
+  const successful = matches.find((summary) =>
+    summary.checks.every((check) => check.conclusion === "success")
+  );
+  return successful?.headSha ?? matches[matches.length - 1]?.headSha;
 }

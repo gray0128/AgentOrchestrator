@@ -98,6 +98,27 @@ export type CheckSummaryReadResult = {
   }[];
 };
 
+export type ReadPullRequestContextInput = {
+  readonly repo: {
+    readonly owner: string;
+    readonly name: string;
+  };
+  readonly pr: number;
+  readonly issue: number;
+  readonly requiredChecks: readonly string[];
+};
+
+export type PullRequestContextReadResult = {
+  readonly responseRef: string;
+  readonly pr: number;
+  readonly headSha: string;
+  readonly mergeable: boolean | null;
+  readonly mergeableState: string | null;
+  readonly labels: readonly string[];
+  readonly approvedReviewCount: number;
+  readonly checks: CheckSummaryReadResult;
+};
+
 export type MergePullRequestInput = {
   readonly repo: {
     readonly owner: string;
@@ -152,6 +173,7 @@ export interface GitHubApiAdapter {
   createOrUpdatePullRequest(input: PullRequestWriteInput): Promise<GitHubWriteResult>;
   submitPullRequestReview(input: SubmitPullRequestReviewInput): Promise<GitHubWriteResult>;
   readCheckSummary(input: ReadCheckSummaryInput): Promise<CheckSummaryReadResult>;
+  readPullRequestContext(input: ReadPullRequestContextInput): Promise<PullRequestContextReadResult>;
   mergePullRequest(input: MergePullRequestInput): Promise<MergePullRequestResult>;
   deleteBranch(input: DeleteBranchInput): Promise<GitHubWriteResult>;
   closeIssue(input: CloseIssueInput): Promise<GitHubWriteResult>;

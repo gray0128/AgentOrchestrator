@@ -397,11 +397,78 @@ test("runtime lifecycle maps merge gate rejection to MERGE_GATE_BLOCKED", async 
     headSha: "fake-head",
     checks: [{ name: "npm run check", conclusion: "success" }]
   });
+  github.pullRequestContexts.set("octo/repo#1", {
+    responseRef: "pr:1:fake-head",
+    pr: 1,
+    headSha: "fake-head",
+    mergeable: true,
+    mergeableState: "clean",
+    labels: ["agent:autopilot", "agent:no-merge"],
+    approvedReviewCount: 1
+  });
 
   await assertLifecycleError(
     () => runIssueLifecycleFromStep(input, "merge_ready", runId),
     ErrorCode.MergeGateBlocked,
     /labels_allowed/
+  );
+});
+
+test("runtime lifecycle waits on merge_ready when GitHub mergeability is still computing", async () => {
+  const { database, github, input } = lifecycleInput();
+  seedResumeRun(database, {
+    state: WorkflowState.MergeReady,
+    headSha: "fake-head",
+    prNumber: 1
+  });
+  github.checkSummaries.set("octo/repo#1@fake-head", {
+    responseRef: "checks:1:fake-head",
+    headSha: "fake-head",
+    checks: [{ name: "npm run check", conclusion: "success" }]
+  });
+  github.pullRequestContexts.set("octo/repo#1", {
+    responseRef: "pr:1:fake-head",
+    pr: 1,
+    headSha: "fake-head",
+    mergeable: null,
+    mergeableState: "unknown",
+    labels: ["agent:autopilot"],
+    approvedReviewCount: 1
+  });
+
+  const result = await runIssueLifecycleFromStep(input, "merge_ready", runId);
+
+  assert.equal(result.mergeSha, undefined);
+  assert.equal(result.snapshot.run.state, WorkflowState.MergeReady);
+  assert.equal(github.merges.length, 0);
+});
+
+test("runtime lifecycle maps stale PR head at merge gate to STALE_HEAD_SHA", async () => {
+  const { database, github, input } = lifecycleInput();
+  seedResumeRun(database, {
+    state: WorkflowState.MergeReady,
+    headSha: "fake-head",
+    prNumber: 1
+  });
+  github.checkSummaries.set("octo/repo#1@new-head", {
+    responseRef: "checks:1:new-head",
+    headSha: "new-head",
+    checks: [{ name: "npm run check", conclusion: "success" }]
+  });
+  github.pullRequestContexts.set("octo/repo#1", {
+    responseRef: "pr:1:new-head",
+    pr: 1,
+    headSha: "new-head",
+    mergeable: true,
+    mergeableState: "clean",
+    labels: ["agent:autopilot"],
+    approvedReviewCount: 1
+  });
+
+  await assertLifecycleError(
+    () => runIssueLifecycleFromStep(input, "merge_ready", runId),
+    ErrorCode.StaleHeadSha,
+    /no longer matches run head/
   );
 });
 

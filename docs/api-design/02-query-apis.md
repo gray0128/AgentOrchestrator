@@ -24,22 +24,28 @@ Errors:
 
 ## `GitHubApi.getPullRequestContext`
 
+MVP implementation name: `GitHubApiAdapter.readPullRequestContext`.
+
 Inputs:
 
 - `repo`
 - `pr_number`
+- `issue_number` (for current issue labels)
+- `requiredChecks` (from repo policy; see `checks.source` below)
 
 Outputs:
 
-- PR title, body, branch, base branch, current `head_sha`, mergeable state.
-- Reviews and review decisions.
-- Changed files and patch metadata.
+- PR number, current `head_sha`, mergeable / `mergeable_state`.
+- Current issue labels.
+- Approved review count scoped to current `head_sha`.
 - Check runs and combined commit statuses for the current head sha.
 
 Rules:
 
 - Check/status data must be scoped to the current `head_sha`.
 - `workflow_run` events are hints only; this method is the current-state read source.
+- Merge gate must call this (or equivalent facts) immediately before `evaluateMergeGate`.
+- `checks.source = branch_protection_read` is accepted by schema validation but **downgrades to `policy.checks.required` in MVP** until branch-protection query support lands.
 
 ## `StateStore.getRunForIssue`
 

@@ -13,8 +13,10 @@ import type {
   IssueCommentWriteResult,
   MergePullRequestInput,
   MergePullRequestResult,
+  PullRequestContextReadResult,
   PullRequestWriteInput,
   ReadCheckSummaryInput,
+  ReadPullRequestContextInput,
   SetIssueLabelsInput,
   SubmitPullRequestReviewInput
 } from "./api.ts";
@@ -221,6 +223,33 @@ export class GitHubRestApiAdapter implements GitHubApiAdapter {
     };
   }
 
+  async readPullRequestContext(input: ReadPullRequestContextInput): Promise<PullRequestContextReadResult> {
+    const prBody = await this.#request<Record<string, unknown>>("GET", `/repos/${repoPath(input.repo)}/pulls/${input.pr}`);
+    const headSha = requiredString(isRecord(prBody.head) ? prBody.head.sha : undefined, "pull request head sha");
+    const issueBody = await this.#request<Record<string, unknown>>(
+      "GET",
+      `/repos/${repoPath(input.repo)}/issues/${input.issue}`
+    );
+    const reviews = await this.#request<unknown[]>("GET", `/repos/${repoPath(input.repo)}/pulls/${input.pr}/reviews`);
+    const checks = await this.readCheckSummary({
+      repo: input.repo,
+      pr: input.pr,
+      headSha,
+      requiredChecks: input.requiredChecks
+    });
+
+    return {
+      responseRef: responseRef(prBody, `pr:${input.pr}`),
+      pr: input.pr,
+      headSha,
+      mergeable: prBody.mergeable === true ? true : prBody.mergeable === false ? false : null,
+      mergeableState: typeof prBody.mergeable_state === "string" ? prBody.mergeable_state : null,
+      labels: readIssueLabels(issueBody),
+      approvedReviewCount: countApprovedReviewsAtHead(Array.isArray(reviews) ? reviews : [], headSha),
+      checks
+    };
+  }
+
   async mergePullRequest(input: MergePullRequestInput): Promise<MergePullRequestResult> {
     const body = await this.#request<GitHubMerge>("PUT", `/repos/${repoPath(input.repo)}/pulls/${input.pr}/merge`, {
       sha: input.expectedHeadSha,
@@ -371,4 +400,40 @@ function arrayField(body: Record<string, unknown>, field: string): unknown[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readIssueLabels(issueBody: Record<string, unknown>): string[] {
+  return arrayField(issueBody, "labels")
+    .map((label) => (isRecord(label) && typeof label.name === "string" ? label.name : null))
+    .filter((name): name is string => name !== null);
+}
+
+function countApprovedReviewsAtHead(reviews: readonly unknown[], headSha: string): number {
+  const latestByUser = new Map<string, { readonly commitId: string | null; readonly state: string }>();
+  for (const review of reviews) {
+    if (!isRecord(review)) {
+      continue;
+    }
+    const user = isRecord(review.user) && typeof review.user.login === "string" ? review.user.login : null;
+    const state = typeof review.state === "string" ? review.state : null;
+    if (!user || !state || !isApprovalAlteringReviewState(state)) {
+      continue;
+    }
+    latestByUser.set(user, {
+      commitId: typeof review.commit_id === "string" ? review.commit_id : null,
+      state
+    });
+  }
+
+  let count = 0;
+  for (const latest of latestByUser.values()) {
+    if (latest.commitId === headSha && latest.state === "APPROVED") {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function isApprovalAlteringReviewState(state: string): boolean {
+  return state === "APPROVED" || state === "CHANGES_REQUESTED" || state === "DISMISSED";
 }

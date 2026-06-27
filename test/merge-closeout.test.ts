@@ -1,7 +1,14 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import { FakeGitHubApiAdapter, evaluateMergeGate, findAgentMarker, renderFinalSummary, createRequestHash } from "../src/index.ts";
+import {
+  FakeGitHubApiAdapter,
+  evaluateMergeGate,
+  findAgentMarker,
+  renderFinalSummary,
+  createRequestHash,
+  resolveGithubMergeable
+} from "../src/index.ts";
 
 test("merge gate recomputes labels, risk, reviews, checks, mergeability, and current head", () => {
   const allowed = evaluateMergeGate({
@@ -31,6 +38,34 @@ test("merge gate recomputes labels, risk, reviews, checks, mergeability, and cur
   assert.deepEqual(allowed.reasons, []);
   assert.equal(blocked.decision, "BLOCKED");
   assert.deepEqual(blocked.reasons, ["labels_allowed", "pr_review_current"]);
+});
+
+test("resolveGithubMergeable maps GitHub mergeability states for merge gate precheck", () => {
+  assert.equal(resolveGithubMergeable(true, "clean"), true);
+  assert.equal(resolveGithubMergeable(false, "dirty"), false);
+  assert.equal(resolveGithubMergeable(null, "unknown"), "computing");
+  assert.equal(resolveGithubMergeable(true, "blocked"), false);
+});
+
+test("merge gate waits when github mergeability is still computing", () => {
+  const waiting = evaluateMergeGate({
+    ...allowedInput(),
+    githubMergeable: false
+  });
+
+  assert.equal(waiting.decision, "WAIT");
+  assert.deepEqual(waiting.reasons, ["github_mergeable"]);
+});
+
+test("merge gate blocks when github mergeability is false and labels are blocked", () => {
+  const blocked = evaluateMergeGate({
+    ...allowedInput(),
+    labels: ["agent:autopilot", "agent:no-merge"],
+    githubMergeable: false
+  });
+
+  assert.equal(blocked.decision, "BLOCKED");
+  assert.deepEqual(blocked.reasons, ["labels_allowed", "github_mergeable"]);
 });
 
 test("merge gate requires the configured number of current PR approvals", () => {

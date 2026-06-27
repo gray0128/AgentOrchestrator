@@ -22,7 +22,7 @@ import { WorkflowEvent, WorkflowState } from "../state/state-machine.ts";
 import type { DomainEvent } from "../webhooks/domain-event.ts";
 import { attributionFromMetadata } from "./agent-attribution.ts";
 import { renderFinalSummary } from "./closeout.ts";
-import { evaluateMergeGate } from "./merge-gate.ts";
+import { evaluateMergeGate, resolveGithubMergeable } from "./merge-gate.ts";
 import { renderFixComment, renderPlanComment, renderPlanReviewComment, renderPrReviewComment } from "./plan-comments.ts";
 import { aggregateChecks, decideFixLoop, mapPrReviewVerdictToEvent } from "./pr-gate.ts";
 import type { CheckAggregationResult } from "./pr-gate.ts";
@@ -1344,6 +1344,22 @@ function waitingForChecksResult(
   };
 }
 
+function waitingForMergeGateResult(
+  input: RunIssueLifecycleInput,
+  runId: string,
+  pr: number,
+  headSha: string
+): RunIssueLifecycleResult {
+  const snapshot = requireWorkflowRunSnapshot(input.database, runId, "resume");
+  return {
+    runId,
+    issue: input.issue.number,
+    pr,
+    headSha,
+    snapshot
+  };
+}
+
 async function finishMergeAndCloseout(
   input: RunIssueLifecycleInput,
   runId: string,
@@ -1354,25 +1370,71 @@ async function finishMergeAndCloseout(
   implementation: ImplementationResult,
   now: Date
 ): Promise<RunIssueLifecycleResult> {
+  const requiredChecks = input.policy.checks.required;
+  const prContext = await input.github.readPullRequestContext({
+    repo: input.event.repo,
+    pr,
+    issue: input.issue.number,
+    requiredChecks
+  });
+  recordCompletedAction(
+    input.database,
+    runId,
+    "read_pull_request_context",
+    "pull_request",
+    String(pr),
+    prContext.responseRef,
+    { runId, pr, headSha, prContext },
+    now
+  );
+  if (prContext.headSha !== headSha) {
+    throw new OrchestratorError(
+      ErrorCode.StaleHeadSha,
+      `PR head ${prContext.headSha} no longer matches run head ${headSha}`
+    );
+  }
+
+  const checkAggregation = aggregateChecks({
+    currentHeadSha: headSha,
+    requiredChecks,
+    skippedCountsAsSuccess: input.policy.checks.skipped_counts_as_success,
+    neutralCountsAsSuccess: input.policy.checks.neutral_counts_as_success,
+    checks: prContext.checks.checks.map((check) => ({
+      name: check.name,
+      headSha: prContext.checks.headSha,
+      conclusion: check.conclusion
+    }))
+  });
+  if (checkAggregation.event === "checks.pending") {
+    return waitingForMergeGateResult(input, runId, pr, headSha);
+  }
+  if (checkAggregation.event === WorkflowEvent.ChecksFailed) {
+    throw new OrchestratorError(ErrorCode.MergeGateBlocked, formatCheckFailureMessage(checkAggregation, "Merge gate blocked by failed checks"));
+  }
+
+  const mergeability = resolveGithubMergeable(prContext.mergeable, prContext.mergeableState);
   const requiredPrApprovals = input.policy.review.required_pr_approvals ?? (input.policy.review.require_pr_review ? 1 : 0);
   const mergeDecision = evaluateMergeGate({
     runId,
     issue: input.issue.number,
     pr,
     currentHeadSha: headSha,
-    labels: input.issue.labels,
+    labels: prContext.labels.length > 0 ? prContext.labels : input.issue.labels,
     risk: implementation.risk,
     allowedRisks: input.policy.merge.auto_merge.allowed_risks,
     blockedLabels: input.policy.merge.auto_merge.blocked_labels,
     planReviewCurrent: planReview.verdict === "APPROVED",
     prReviewHeadSha: prReviews[0]?.head_sha ?? headSha,
-    approvedPrReviewCount: prReviews.length,
+    approvedPrReviewCount: Math.max(prReviews.length, prContext.approvedReviewCount),
     requiredPrApprovals,
     checksSucceeded: true,
-    githubMergeable: true,
+    githubMergeable: mergeability === true,
     mergeMethod: input.policy.merge.default_method,
     now
   });
+  if (mergeDecision.decision === "WAIT") {
+    return waitingForMergeGateResult(input, runId, pr, headSha);
+  }
   assertMergeAllowed(mergeDecision);
   const merge = await input.github.mergePullRequest({
     repo: input.event.repo,

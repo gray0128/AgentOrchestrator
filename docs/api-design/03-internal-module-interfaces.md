@@ -47,6 +47,7 @@ Methods:
 - `createOrUpdatePullRequest`
 - `submitPullRequestReview`
 - `readCheckSummary`
+- `readPullRequestContext`
 - `mergePullRequest`
 - `deleteBranch`
 - `closeIssue`
@@ -57,6 +58,8 @@ Rules:
 - Every write method returns a GitHub reference suitable for `idempotent_actions.response_ref`.
 - Merge requires current PR head `sha`.
 - `readCheckSummary` returns evidence for the requested PR head and must not synthesize success for missing required checks.
+- `readPullRequestContext` is the merge-gate precheck read source for current PR head, mergeability, labels, current-head approvals, and required check evidence.
+- `checks.source = branch_protection_read` downgrades to `policy.checks.required` in MVP; do not assume live branch-protection names are fetched yet.
 - The real adapter must obtain installation tokens from the GitHub App token provider.
 - The fake adapter is test-only and must not be used by live `serve` or non-dry-run reconciliation paths.
 - Adapter error mapping must use the registered GitHub error codes before surfacing failures to the state machine.
