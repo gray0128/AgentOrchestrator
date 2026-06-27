@@ -215,6 +215,7 @@ Resume and merge paths parse the templates above from live GitHub artifacts:
 - Issue comments provide planner and plan review evidence.
 - PR bodies provide implementer evidence and current `head_sha`.
 - PR reviews provide current-head approval evidence for `ci_waiting` and `merge_ready` resume.
+- The final summary marker with role `merge_agent` and verdict `MERGED` provides merge and issue-close closeout evidence. Reconciliation uses it to backfill completed merge and close-issue action records when the remote writes succeeded before SQLite was updated.
 
 If a required marker or section is missing, the run enters `blocked` instead of using stub summaries. Marker `run_id`, `issue`, `pr`, and `head_sha` must match the workflow run being resumed.
 

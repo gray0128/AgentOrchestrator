@@ -91,6 +91,8 @@ Records GitHub writes and local side effects that must not be repeated.
 - PR-scoped transitions must compare the expected `head_sha`.
 - Repeated webhooks may trigger reconciliation, but must not repeat an idempotent action with the same key.
 - If an existing idempotency key has a different `request_hash`, the run must enter `blocked` with `IDEMPOTENCY_CONFLICT`.
+- Reconciliation may backfill completed `idempotent_actions` from live GitHub artifacts when a remote write succeeded before the local action record was committed. The recovered record must use a deterministic key derived from the run id and artifact identity, must preserve a stable request hash, and must skip on replay.
+- A final summary marker with role `merge_agent` and verdict `MERGED` is closeout evidence for both the merge artifact and the linked issue closure; replay must not create another comment, review, PR, merge, or issue close when those artifacts already exist remotely.
 
 ## Time And ID Rules
 
