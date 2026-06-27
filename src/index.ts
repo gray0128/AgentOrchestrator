@@ -254,7 +254,9 @@ export type {
 export {
   acquireLease,
   casUpdateRunState,
+  getDelivery,
   getWorkflowRunSnapshot,
+  insertDeliveryIfAbsent,
   invalidateForNewHead,
   insertWorkflowRun,
   listWorkflowRunsForReconciliation,
@@ -263,6 +265,7 @@ export {
   recordIdempotentAction,
   recordRunLastError,
   repairWorkflowRunFromArtifacts,
+  updateDeliveryStatus,
 } from "./state/sqlite-store.ts";
 export {
   getDashboardStats,
@@ -289,6 +292,8 @@ export {
 export type {
   AcquireLeaseInput,
   CasUpdateRunStateInput,
+  DeliveryInsertInput,
+  DeliveryRow,
   IdempotentActionInput,
   IdempotentActionResult,
   InvalidateHeadInput,
@@ -296,6 +301,7 @@ export type {
   RepairWorkflowRunInput,
   RepairWorkflowRunResult,
   StateDatabase,
+  UpdateDeliveryStatusInput,
   WorkflowRunForReconciliation,
   WorkflowRunLookup,
   WorkflowRunSeed,
@@ -317,6 +323,8 @@ export {
 } from "./webhooks/signature.ts";
 export {
   InMemoryDeliveryStore,
+  SqliteDeliveryStore,
+  finalizeDeliveryStatus,
   recordDeliveryOnce,
 } from "./webhooks/delivery-deduper.ts";
 export {
@@ -328,6 +336,7 @@ export type {
   DeliveryInput,
   DeliveryRecord,
   DeliveryStatus,
+  DeliveryStatusUpdate,
   DeliveryStore,
 } from "./webhooks/delivery-deduper.ts";
 export type {

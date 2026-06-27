@@ -209,7 +209,7 @@ Errors:
 
 ## `GET /api/local/v1/deliveries`
 
-Recent webhook deliveries for debugging.
+Recent webhook deliveries for debugging. Rows come from the shared SQLite `deliveries` table that `ao serve` uses for persistent webhook dedupe (`received`, `ignored`, `processed`, `failed`).
 
 Query parameters:
 

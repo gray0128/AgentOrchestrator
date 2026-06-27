@@ -315,6 +315,107 @@ export function migrateStateDatabase(database: StateDatabase): void {
   `);
 }
 
+export type DeliveryInsertInput = {
+  readonly deliveryId: string;
+  readonly eventName: string;
+  readonly action?: string;
+  readonly repoOwner?: string;
+  readonly repoName?: string;
+  readonly receivedAt: string;
+  readonly status: "received" | "ignored" | "processed" | "failed";
+};
+
+export type DeliveryRow = {
+  readonly delivery_id: string;
+  readonly event_name: string;
+  readonly action: string | null;
+  readonly repo_owner: string | null;
+  readonly repo_name: string | null;
+  readonly received_at: string;
+  readonly processed_at: string | null;
+  readonly status: "received" | "ignored" | "processed" | "failed";
+  readonly error_code: string | null;
+  readonly error_message: string | null;
+};
+
+export type UpdateDeliveryStatusInput = {
+  readonly deliveryId: string;
+  readonly status: "received" | "ignored" | "processed" | "failed";
+  readonly processedAt?: string;
+  readonly errorCode?: string;
+  readonly errorMessage?: string;
+};
+
+export function insertDeliveryIfAbsent(database: StateDatabase, input: DeliveryInsertInput): boolean {
+  const result = database
+    .prepare(
+      `
+        INSERT OR IGNORE INTO deliveries (
+          delivery_id,
+          event_name,
+          action,
+          repo_owner,
+          repo_name,
+          received_at,
+          status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      input.deliveryId,
+      input.eventName,
+      input.action ?? null,
+      input.repoOwner ?? null,
+      input.repoName ?? null,
+      input.receivedAt,
+      input.status
+    );
+
+  return result.changes === 1;
+}
+
+export function getDelivery(database: StateDatabase, deliveryId: string): DeliveryRow | undefined {
+  return database
+    .prepare(
+      `
+        SELECT delivery_id,
+               event_name,
+               action,
+               repo_owner,
+               repo_name,
+               received_at,
+               processed_at,
+               status,
+               error_code,
+               error_message
+        FROM deliveries
+        WHERE delivery_id = ?
+      `
+    )
+    .get(deliveryId) as DeliveryRow | undefined;
+}
+
+export function updateDeliveryStatus(database: StateDatabase, input: UpdateDeliveryStatusInput): void {
+  database
+    .prepare(
+      `
+        UPDATE deliveries
+        SET status = ?,
+            processed_at = COALESCE(?, processed_at),
+            error_code = COALESCE(?, error_code),
+            error_message = COALESCE(?, error_message)
+        WHERE delivery_id = ?
+      `
+    )
+    .run(
+      input.status,
+      input.processedAt ?? null,
+      input.errorCode ?? null,
+      input.errorMessage ?? null,
+      input.deliveryId
+    );
+}
+
 export function insertWorkflowRun(database: StateDatabase, input: WorkflowRunSeed): void {
   database
     .prepare(

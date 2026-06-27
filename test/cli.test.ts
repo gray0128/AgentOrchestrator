@@ -12,6 +12,7 @@ import {
   WorkflowState,
   getWorkflowRunSnapshot,
   insertWorkflowRun,
+  listRecentDeliveries,
   migrateStateDatabase,
   openStateDatabase,
   runCli,
@@ -591,6 +592,91 @@ test("serve runtime accepts signed GitHub webhook intake when TCP bind is availa
     assert.equal(snapshot?.actions.length, 1);
   } finally {
     await runtime.close();
+  }
+});
+
+test("serve runtime treats replayed delivery ids as duplicates after restart", async (context) => {
+  const databasePath = join(mkdtempSync(join(tmpdir(), "ao-dedupe-")), "state.sqlite");
+  let database = openStateDatabase(databasePath);
+  migrateStateDatabase(database);
+  const github = new FakeGitHubApiAdapter();
+  const payload = JSON.stringify({
+    action: "labeled",
+    label: { name: "agent:autopilot" },
+    repository: { name: "repo", owner: { login: "octo" } },
+    issue: { number: 123 },
+    sender: { login: "alice" },
+  });
+  const headers = {
+    "x-github-event": "issues",
+    "x-github-delivery": "delivery-restart",
+    "x-hub-signature-256": createSignature(payload, "secret"),
+  };
+  let runtime;
+  try {
+    runtime = await startServeRuntime({
+      host: "127.0.0.1",
+      port: 0,
+      database,
+      databasePath,
+      webhookSecret: "secret",
+      github,
+    });
+  } catch (error) {
+    database.close();
+    if (error instanceof Error && "code" in error && error.code === "EPERM") {
+      context.skip("sandbox does not allow binding a local TCP listener");
+      return;
+    }
+    throw error;
+  }
+
+  try {
+    const first = await fetch(`http://${runtime.host}:${runtime.port}/webhook`, {
+      method: "POST",
+      headers,
+      body: payload,
+    });
+    const firstBody = await first.json();
+    assert.equal(first.status, 202);
+    assert.equal(firstBody.advancement.advanced, true);
+    assert.equal(github.issueComments.length, 1);
+
+    await runtime.close();
+    database = openStateDatabase(databasePath);
+    migrateStateDatabase(database);
+
+    const restarted = await startServeRuntime({
+      host: "127.0.0.1",
+      port: 0,
+      database,
+      databasePath,
+      webhookSecret: "secret",
+      github,
+    });
+    try {
+      const replay = await fetch(`http://${restarted.host}:${restarted.port}/webhook`, {
+        method: "POST",
+        headers,
+        body: payload,
+      });
+      const replayBody = await replay.json();
+
+      assert.equal(replay.status, 200);
+      assert.equal(replayBody.duplicate, true);
+      assert.equal(replayBody.delivery.status, "processed");
+      assert.equal(github.issueComments.length, 1);
+
+      const deliveries = listRecentDeliveries(database, { limit: 10 });
+      assert.equal(deliveries.total, 1);
+      assert.equal(deliveries.items[0]?.deliveryId, "delivery-restart");
+      assert.equal(deliveries.items[0]?.status, "processed");
+    } finally {
+      await restarted.close();
+    }
+  } catch (error) {
+    await runtime.close().catch(() => undefined);
+    throw error;
   }
 });
 
