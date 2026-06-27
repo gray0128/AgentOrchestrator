@@ -81,6 +81,18 @@
         }
       }
     },
+    "agent_env": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["minimal", "legacy_blacklist"] },
+        "allowlist": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
     "agent_routing": {
       "type": "object",
       "additionalProperties": false,

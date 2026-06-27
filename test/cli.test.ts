@@ -133,7 +133,13 @@ test("doctor reports live setup checks without exposing secrets", async () => {
     assert.equal(exitCode, 0);
     assert.equal(result.command, "doctor");
     assert.equal(result.ok, true);
-    assert.ok(result.checks.length >= 7);
+    assert.ok(result.checks.length >= 8);
+    const agentEnvCheck = result.checks.find(
+      (check: { name: string }) => check.name === "agent_env",
+    );
+    assert.equal(agentEnvCheck?.status, "pass");
+    assert.match(agentEnvCheck?.message ?? "", /mode=minimal keys=/);
+    assert.doesNotMatch(agentEnvCheck?.message ?? "", /\/bin|\/home|token|secret/i);
     assert.equal(
       result.checks.every(
         (check: { status: string }) => check.status === "pass",

@@ -1,6 +1,7 @@
-import { ErrorCode } from "../errors.ts";
+import type { AgentEnvConfig } from "../agents/agent-env.ts";
 import { AgentRole } from "../agents/adapter.ts";
 import type { ImplementationResult, PlanResult, ReviewerVerdict, TaskEnvelope, TriageResult } from "../agents/adapter.ts";
+import { ErrorCode } from "../errors.ts";
 
 export type FixResult = {
   readonly schema: "agent-orchestrator.fix-result.v1";
@@ -84,8 +85,11 @@ export type LocalConfig = {
     readonly triage?: AgentConfig;
     readonly merge_agent: { readonly adapter: "builtin"; readonly mode: "deterministic" };
   };
+  readonly agent_env?: AgentEnvConfig;
   readonly agent_routing?: AgentRoutingConfig;
 };
+
+export type { AgentEnvConfig } from "../agents/agent-env.ts";
 
 type AgentConfig = {
   readonly adapter: "codex" | "claude" | "custom";
@@ -389,6 +393,9 @@ export function validateLocalConfig(value: unknown): ValidationResult<LocalConfi
   validateWorkspaceConfig(value.workspaces, errors);
   validateRepositoryConfigs(value.repositories, errors);
   validateAgentConfigs(value.agents, errors);
+  if (value.agent_env !== undefined) {
+    validateAgentEnvConfig(value.agent_env, errors);
+  }
   if (value.agent_routing !== undefined) {
     validateAgentRoutingConfig(value.agent_routing, errors);
   }
@@ -552,6 +559,36 @@ function validateRepositoryConfigs(value: unknown, errors: string[]): void {
     requireNonEmptyString(repo.default_branch, `repositories.${index}.default_branch`, errors);
     requireNonEmptyString(repo.policy_file, `repositories.${index}.policy_file`, errors);
   });
+}
+
+function validateAgentEnvConfig(value: unknown, errors: string[]): void {
+  if (!isRecord(value)) {
+    errors.push("agent_env must be an object");
+    return;
+  }
+  if (value.mode !== undefined) {
+    requireEnum(value, "mode", ["minimal", "legacy_blacklist"], errors, "agent_env.mode");
+  }
+  if (value.allowlist !== undefined) {
+    requireStringArray(value.allowlist, "agent_env.allowlist", errors);
+    const seen = new Set<string>();
+    for (const [index, key] of (value.allowlist as unknown[]).entries()) {
+      if (typeof key !== "string" || key.length === 0) {
+        continue;
+      }
+      if (seen.has(key)) {
+        errors.push(`agent_env.allowlist[${index}] duplicates ${key}`);
+      }
+      seen.add(key);
+      if (isSecretEnvKeyName(key)) {
+        errors.push(`agent_env.allowlist must not include secret-bearing key ${key}`);
+      }
+    }
+  }
+}
+
+function isSecretEnvKeyName(key: string): boolean {
+  return /(^|_)(GITHUB|TOKEN|SECRET|PRIVATE|PRIVATE_KEY|WEBHOOK|INSTALLATION_ID)(_|$)/i.test(key);
 }
 
 function validateAgentConfigs(value: unknown, errors: string[]): void {
