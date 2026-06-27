@@ -83,6 +83,8 @@ Untrusted content must not:
 
 Violations enter `blocked` with `PROMPT_INJECTION_POLICY_VIOLATION` when they affect execution.
 
+MVP enforcement uses deterministic imperative-pattern detection, not general content moderation. Patterns target explicit requests to bypass gates, exfiltrate secrets, expand write paths, change agent identity or network policy, mislabel high-risk work, or override orchestrator policy. Benign repository task text that merely mentions reviews, CI, or risk in normal engineering context should remain allowed.
+
 ## Workspace Evidence
 
 - Implementer worktrees must be created under `workspaces.root` through Workspace Manager.
