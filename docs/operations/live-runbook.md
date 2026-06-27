@@ -2,6 +2,8 @@
 
 This runbook is the operator path for running AgentOrchestrator against a real GitHub repository from a local machine. It assumes a single GitHub.com repository, a local target checkout, and an installed GitHub App.
 
+For release readiness, use this runbook together with [Operational-Ready Release Criteria](operational-ready-release-criteria.md). A release is not operational-ready unless the release gate, live smoke gate, recovery drill gate, docs/runbook gate, and known limitations gate are all complete.
+
 Use this order for every live smoke:
 
 1. Prepare credentials and local config.
@@ -266,3 +268,4 @@ ao reconcile --config config/local.json --repo <owner/name> --issue <number> --a
 - `ao inspect-run` showed the expected run id, state, transitions, and head SHA evidence.
 - GitHub App delivery logs show successful public delivery when testing the tunnel path.
 - Any blocked or failed run has a recorded error code, issue/PR comment, and next human action.
+- Release readiness evidence is recorded against the operational-ready gates, or skipped gates are listed in release notes known limitations.
