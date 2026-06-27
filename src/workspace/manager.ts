@@ -31,6 +31,12 @@ export type PrepareImplementerWorkspaceInput = WorkspacePlanInput & {
   readonly baseBranch: string;
 };
 
+export type PrepareFixWorkspaceInput = WorkspacePlanInput & {
+  readonly sourceRepoPath: string;
+  readonly branch: string;
+  readonly headSha: string;
+};
+
 export type PreparedImplementerWorkspace = WorkspacePlan & {
   readonly baseSha: string;
 };
@@ -77,6 +83,28 @@ export function prepareImplementerWorkspace(input: PrepareImplementerWorkspaceIn
   const baseSha = resolveBaseSha(input.sourceRepoPath, input.baseBranch);
   removeExistingWorktree(input.sourceRepoPath, plan.path, plan.branch);
   runGitOrThrow(input.sourceRepoPath, ["worktree", "add", "-B", plan.branch, plan.path, baseSha], "prepare implementer worktree");
+  return {
+    ...plan,
+    baseSha
+  };
+}
+
+export function prepareFixWorkspace(input: PrepareFixWorkspaceInput): PreparedImplementerWorkspace {
+  const plan = createWorkspacePlan(input);
+  if (plan.branch !== input.branch) {
+    throw new OrchestratorError(
+      ErrorCode.WorkspacePathEscape,
+      `Fix workspace branch must match controlled plan branch: expected ${plan.branch}, received ${input.branch}`
+    );
+  }
+  mkdirSync(input.workspaceRoot, { recursive: true });
+  const baseSha = resolveFixBaseSha(input.sourceRepoPath, input.branch, input.headSha);
+  removeExistingWorktree(input.sourceRepoPath, plan.path, plan.branch);
+  runGitOrThrow(
+    input.sourceRepoPath,
+    ["worktree", "add", "-B", plan.branch, plan.path, baseSha],
+    "prepare fix worktree"
+  );
   return {
     ...plan,
     baseSha
@@ -185,6 +213,21 @@ function assertPathUnderWorkspace(workspacePath: string, candidate: string): voi
       `Changed file escapes controlled worktree: ${resolvedCandidate}`
     );
   }
+}
+
+function resolveFixBaseSha(sourceRepoPath: string, branch: string, headSha: string): string {
+  const branchRef = runGit(sourceRepoPath, ["rev-parse", branch]);
+  if (branchRef.ok && branchRef.stdout.length > 0) {
+    return branchRef.stdout;
+  }
+  const headRef = runGit(sourceRepoPath, ["rev-parse", "--verify", `${headSha}^{commit}`]);
+  if (headRef.ok && headRef.stdout.length > 0) {
+    return headRef.stdout;
+  }
+  throw new OrchestratorError(
+    ErrorCode.WorkspacePrepareFailed,
+    `Unable to resolve fix base sha for branch ${branch} or head ${headSha} in ${sourceRepoPath}`
+  );
 }
 
 function resolveBaseSha(sourceRepoPath: string, baseBranch: string): string {

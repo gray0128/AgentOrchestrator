@@ -1,4 +1,5 @@
 import type { PlanResult, ReviewerVerdict } from "../agents/adapter.ts";
+import type { FixResult } from "../contracts/validation.ts";
 import { renderAgentMarker } from "../github/markers.ts";
 import { sanitizeMarkdown } from "../security/redaction.ts";
 import { appendAgentSubmissionFooter, type AgentAttribution } from "./agent-attribution.ts";
@@ -48,6 +49,36 @@ ${renderBlockingFindings(verdict)}`,
       issue: verdict.issue,
       run_id: verdict.run_id,
       verdict: verdict.verdict
+    }),
+    attribution
+  );
+}
+
+export function renderFixComment(fix: FixResult, attribution?: AgentAttribution): string {
+  return appendAgentSubmissionFooter(
+    `## Fix Round ${fix.fix_round}
+
+${sanitizeMarkdown(fix.summary)}
+
+## Changed Files
+
+${renderList(fix.changed_files)}
+
+## Tests
+
+${renderList(fix.test_summary)}
+
+## Risk
+
+- ${fix.risk}`,
+    renderAgentMarker({
+      schema: "agent-orchestrator:v1",
+      role: "implementer",
+      issue: fix.issue,
+      pr: fix.pr,
+      run_id: fix.run_id,
+      head_sha: fix.new_head_sha,
+      verdict: "FIX_READY"
     }),
     attribution
   );

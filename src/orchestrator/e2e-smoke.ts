@@ -17,6 +17,7 @@ export type MockedEndToEndSmokeInput = {
   readonly github: GitHubApiAdapter;
   readonly agents: RuntimeLifecycleAgents;
   readonly requiredPrApprovals?: number;
+  readonly policy?: RepoPolicy;
   readonly now?: Date;
   readonly workspace?: RuntimeLifecycleWorkspace;
   readonly workspaceRoot?: string;
@@ -80,13 +81,14 @@ export async function runMockedEndToEndSmoke(input: MockedEndToEndSmokeInput): P
         sourceRepoPath: input.sourceRepoPath
       }
     : createSmokeWorkspaceFixture();
+  const basePolicy = input.policy ?? smokePolicy;
   const policy =
     input.requiredPrApprovals === undefined
-      ? smokePolicy
+      ? basePolicy
       : {
-          ...smokePolicy,
+          ...basePolicy,
           review: {
-            ...smokePolicy.review,
+            ...basePolicy.review,
             required_pr_approvals: input.requiredPrApprovals
           }
         };

@@ -20,5 +20,6 @@
     "test_summary": { "type": "array", "items": { "type": "string" } },
     "risk": { "enum": ["low", "medium", "high"] },
     "created_at": { "type": "string", "format": "date-time" }
-  }
+  },
+  "description": "Implementer output after a PR review or CI repair round. Orchestrator validates this schema, renders the fix comment, commits on the PR branch, and invalidates prior head-bound review/check conclusions."
 }

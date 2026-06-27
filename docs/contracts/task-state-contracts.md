@@ -51,6 +51,16 @@
 - After a fix push, the next state is `pr_reviewing`; the system must not jump directly to `merge_ready`.
 - Check/status events only apply when their sha equals the current PR head sha.
 
+## PR Review Fix Loop Contract
+
+When a current-head PR reviewer returns `REQUEST_CHANGES`:
+
+1. Orchestrator records the review on the current head and transitions `pr_reviewing` → `fixing`, incrementing `fix_round` when below `review.max_fix_rounds`.
+2. Implementer produces a `fix-result` artifact from an actual workspace diff; orchestrator commits on the bound PR branch and updates the PR body marker to the new `head_sha`.
+3. Orchestrator transitions `fixing` → `pr_reviewing` with `agent.fix_ready` and re-runs all required PR reviewers against the new head.
+4. Prior PR review approvals and CI conclusions bound to the old head are ignored by merge gates and check aggregation.
+5. When `fix_round >= review.max_fix_rounds`, the next `REQUEST_CHANGES` or `checks.failed` event transitions to `failed` with `retry.exhausted`.
+
 ## Label Contract
 
 - Entry label: `agent:autopilot`.

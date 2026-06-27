@@ -22,8 +22,9 @@ import type { ErrorCode as ErrorCodeValue } from "../src/errors.ts";
 import { buildDispatchInput } from "../src/orchestrator/issue-dispatch.ts";
 import { DomainEventType } from "../src/webhooks/domain-event.ts";
 import { fakeGitHubArtifactReader } from "../src/github/fake-github-artifact-reader.ts";
-import { createGitWorkspaceFixture, seedWorkspaceFile } from "./helpers/git-workspace-fixture.ts";
+import { createGitWorkspaceFixture, resolveGitRef, seedWorkspaceFile } from "./helpers/git-workspace-fixture.ts";
 import { buildResumeArtifactState } from "./helpers/resume-artifact-fixture.ts";
+import { SequenceFakeAgentAdapter } from "./helpers/sequence-fake-agent-adapter.ts";
 
 const runId = "run_octo_repo_issue_123";
 const repo = { owner: "octo", name: "repo", default_branch: "main" };
@@ -155,25 +156,45 @@ const resumeArtifacts = buildResumeArtifactState({
 });
 
 function lifecycleInput(options?: {
-  readonly agents?: ReturnType<typeof lifecycleAgents>;
+  readonly agents?:
+    | ReturnType<typeof lifecycleAgents>
+    | ((resumeHeadSha: string) => ReturnType<typeof lifecycleAgents>);
   readonly labels?: readonly string[];
   readonly policyOverride?: typeof policy;
   readonly resumeArtifacts?: ReturnType<typeof buildResumeArtifactState> | null;
+  readonly useGitHeadForResume?: boolean;
 }) {
   const fixture = createGitWorkspaceFixture({
     repoName: repo.name,
     issue: issue.number,
     issueTitle: issue.title
   });
+  const resumeHeadSha = options?.useGitHeadForResume
+    ? resolveGitRef(fixture.sourceRepoPath, "HEAD")
+    : "fake-head";
   const database = openStateDatabase();
   migrateStateDatabase(database);
   const github = new FakeGitHubApiAdapter();
-  const agents = options?.agents ?? lifecycleAgents();
-  const artifactState = options?.resumeArtifacts === null ? undefined : (options?.resumeArtifacts ?? resumeArtifacts);
+  const agents =
+    typeof options?.agents === "function"
+      ? options.agents(resumeHeadSha)
+      : (options?.agents ?? lifecycleAgents());
+  const artifactState =
+    options?.resumeArtifacts === null
+      ? undefined
+      : (options?.resumeArtifacts ??
+        buildResumeArtifactState({
+          runId,
+          issue: issue.number,
+          pr: 1,
+          headSha: resumeHeadSha,
+          branch: fixture.branch
+        }));
 
   return {
     database,
     github,
+    resumeHeadSha,
     input: {
       database,
       github,
@@ -334,21 +355,84 @@ test("runtime lifecycle maps merge gate rejection to MERGE_GATE_BLOCKED", async 
   );
 });
 
-test("runtime lifecycle maps PR review changes to REVIEW_CHANGES_REQUESTED", async () => {
-  const { database, input } = lifecycleInput({
-    agents: lifecycleAgents({ prReviewerResult: { verdict: "REQUEST_CHANGES", headSha: "fake-head" } })
+test("runtime lifecycle repairs after PR review request changes on resume", async () => {
+  const implementationResult = {
+    schema: "agent-orchestrator.implementation-result.v1" as const,
+    role: AgentRole.Implementer,
+    run_id: runId,
+    issue: 123,
+    branch: "agent/issue-123-low-risk-docs-update",
+    changed_files: ["docs/example.md"],
+    summary: "Updated docs.",
+    test_summary: ["npm run check"],
+    risk: "low" as const,
+    pr_body_fields: {
+      summary: "Updated docs.",
+      tests: ["npm run check"],
+      risk: "low"
+    },
+    created_at: "2026-06-24T08:00:00.000Z"
+  };
+  const { database, github, input, resumeHeadSha } = lifecycleInput({
+    useGitHeadForResume: true,
+    agents: (gitHead) => ({
+      ...lifecycleAgents(),
+      implementer: new SequenceFakeAgentAdapter({
+        role: AgentRole.Implementer,
+        seedWorkspace: (workspacePath) => seedWorkspaceFile(workspacePath, "docs/example.md", "updated\n"),
+        results: [implementationResult, { ...implementationResult, summary: "Fixed review feedback." }]
+      }),
+      prReviewer: new SequenceFakeAgentAdapter({
+        role: AgentRole.PrReviewer,
+        results: [
+          {
+            schema: "agent-orchestrator.reviewer-verdict.v1",
+            role: AgentRole.PrReviewer,
+            run_id: runId,
+            issue: 123,
+            pr: 1,
+            head_sha: gitHead,
+            verdict: "REQUEST_CHANGES",
+            risk: "low",
+            summary: "Needs changes.",
+            blocking_findings: [],
+            required_tests: ["npm run check"],
+            created_at: "2026-06-24T08:00:00.000Z"
+          },
+          {
+            schema: "agent-orchestrator.reviewer-verdict.v1",
+            role: AgentRole.PrReviewer,
+            run_id: runId,
+            issue: 123,
+            pr: 1,
+            head_sha: "fake-1",
+            verdict: "APPROVED",
+            risk: "low",
+            summary: "Fix approved.",
+            blocking_findings: [],
+            required_tests: ["npm run check"],
+            created_at: "2026-06-24T08:00:00.000Z"
+          }
+        ]
+      })
+    })
   });
   seedResumeRun(database, {
     state: WorkflowState.PrReviewing,
-    headSha: "fake-head",
+    headSha: resumeHeadSha,
     prNumber: 1
   });
+  github.checkSummaries.set("octo/repo#1@fake-1", {
+    responseRef: "checks:1:fake-1",
+    headSha: "fake-1",
+    checks: [{ name: "npm run check", conclusion: "success" }]
+  });
 
-  await assertLifecycleError(
-    () => runIssueLifecycleFromStep(input, "pr_reviewing", runId),
-    ErrorCode.ReviewChangesRequested,
-    /requested changes/
-  );
+  const result = await runIssueLifecycleFromStep(input, "pr_reviewing", runId);
+
+  assert.equal(result.headSha, "fake-1");
+  assert.equal(result.snapshot.run.fix_round, 1);
+  assert.equal(result.snapshot.run.state, WorkflowState.IssueClosed);
 });
 
 test("runtime lifecycle maps exhausted fix rounds to RETRY_EXHAUSTED", async () => {
@@ -370,6 +454,9 @@ test("runtime lifecycle maps exhausted fix rounds to RETRY_EXHAUSTED", async () 
     ErrorCode.RetryExhausted,
     /fix rounds are exhausted/
   );
+
+  const snapshot = getWorkflowRunSnapshot(database, { runId });
+  assert.equal(snapshot?.run.state, WorkflowState.Failed);
 });
 
 test("runtime lifecycle maps blocked PR review to MERGE_GATE_BLOCKED", async () => {

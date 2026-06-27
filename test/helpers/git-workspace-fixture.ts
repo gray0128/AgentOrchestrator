@@ -64,3 +64,11 @@ export function runGit(cwd: string, args: readonly string[]): void {
     throw new Error(`git ${args.join(" ")} failed in ${cwd}: ${result.stderr || result.stdout}`);
   }
 }
+
+export function resolveGitRef(cwd: string, ref: string): string {
+  const result = spawnSync("git", ["-C", cwd, "rev-parse", ref], { encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(`git rev-parse ${ref} failed in ${cwd}: ${result.stderr || result.stdout}`);
+  }
+  return result.stdout.trim();
+}
