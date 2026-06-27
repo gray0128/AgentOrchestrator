@@ -89,6 +89,8 @@ export type {
   MergePullRequestResult,
   PullRequestWriteInput,
   ReadCheckSummaryInput,
+  ReadPullRequestContextInput,
+  PullRequestContextReadResult,
   SetIssueLabelsInput,
   SubmitPullRequestReviewInput,
 } from "./github/api.ts";
@@ -103,7 +105,7 @@ export type {
   GitHubRestApiAdapterInput,
   GitHubRestFetch,
 } from "./github/rest-github-api.ts";
-export type { StoredIssueComment } from "./github/fake-github-api.ts";
+export type { StoredIssueComment, StoredPullRequestContext } from "./github/fake-github-api.ts";
 export {
   renderPlanComment,
   renderPlanReviewComment,
@@ -133,7 +135,7 @@ export {
   decideFixLoop,
   mapPrReviewVerdictToEvent,
 } from "./orchestrator/pr-gate.ts";
-export { evaluateMergeGate } from "./orchestrator/merge-gate.ts";
+export { evaluateMergeGate, resolveGithubMergeable } from "./orchestrator/merge-gate.ts";
 export { renderFinalSummary } from "./orchestrator/closeout.ts";
 export { renderPullRequestBody } from "./orchestrator/pr-body.ts";
 export type {

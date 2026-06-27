@@ -40,6 +40,19 @@ export type EvaluateMergeGateInput = {
   readonly now: Date;
 };
 
+export function resolveGithubMergeable(mergeable: boolean | null, mergeableState: string | null): boolean | "computing" {
+  if (mergeable === null || mergeableState === "unknown") {
+    return "computing";
+  }
+  if (mergeable === false) {
+    return false;
+  }
+  if (mergeableState !== null && mergeableState !== "clean") {
+    return false;
+  }
+  return true;
+}
+
 export function evaluateMergeGate(input: EvaluateMergeGateInput): MergeDecision {
   const labelsAllowed = !input.labels.some((label) => input.blockedLabels.includes(label));
   const riskAllowed = input.allowedRisks.includes(input.risk);
