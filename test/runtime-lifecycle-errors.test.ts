@@ -435,6 +435,51 @@ test("runtime lifecycle repairs after PR review request changes on resume", asyn
   assert.equal(result.snapshot.run.state, WorkflowState.IssueClosed);
 });
 
+test("runtime lifecycle blocks denied fix paths from fixing state", async () => {
+  const { database, input, resumeHeadSha } = lifecycleInput({
+    useGitHeadForResume: true,
+    agents: () => ({
+      ...lifecycleAgents(),
+      implementer: new FakeAgentAdapter({
+        role: AgentRole.Implementer,
+        seedWorkspace: (workspacePath) => seedWorkspaceFile(workspacePath, ".github/workflows/ci.yml", "name: ci\n"),
+        result: {
+          schema: "agent-orchestrator.implementation-result.v1",
+          role: AgentRole.Implementer,
+          run_id: runId,
+          issue: 123,
+          branch: "agent/issue-123-low-risk-docs-update",
+          changed_files: [".github/workflows/ci.yml"],
+          summary: "Updated CI.",
+          test_summary: ["npm run check"],
+          risk: "low",
+          pr_body_fields: {
+            summary: "Updated CI.",
+            tests: ["npm run check"],
+            risk: "low"
+          },
+          created_at: "2026-06-24T08:00:00.000Z"
+        }
+      })
+    })
+  });
+  seedResumeRun(database, {
+    state: WorkflowState.Fixing,
+    headSha: resumeHeadSha,
+    prNumber: 1
+  });
+  database.prepare("UPDATE workflow_runs SET fix_round = 1 WHERE run_id = ?").run(runId);
+
+  await assertLifecycleError(
+    () => runIssueLifecycleFromStep(input, "fixing", runId),
+    ErrorCode.PolicyDeniedPath,
+    /Denied paths/
+  );
+
+  const snapshot = getWorkflowRunSnapshot(database, { runId });
+  assert.equal(snapshot?.run.state, WorkflowState.Blocked);
+});
+
 test("runtime lifecycle maps exhausted fix rounds to RETRY_EXHAUSTED", async () => {
   const { database, input } = lifecycleInput({
     agents: lifecycleAgents({ prReviewerResult: { verdict: "REQUEST_CHANGES", headSha: "fake-head" } }),

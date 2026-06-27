@@ -185,7 +185,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
   });
   const pathPolicyBlock = resolvePathPolicyBlock(pathPolicyDecision);
   if (pathPolicyBlock) {
-    await blockRunForPathPolicy(input, runId, pathPolicyBlock, now);
+    await blockRunForPathPolicy(input, runId, pathPolicyBlock, WorkflowState.Implementing, null, now);
   }
   const implementation = {
     ...implementationProposal,
@@ -407,7 +407,7 @@ async function runRequiredPrReviews(input: {
     for (const [index, reviewer] of requiredReviewers.entries()) {
       const prReviewRun = await runAgent(
         reviewer,
-        prReviewerEnvelope(input.input, input.runId, input.pr, currentHeadSha, input.now),
+        prReviewerEnvelope(input.input, input.runId, input.pr, currentHeadSha, input.branch, input.now),
         `Review the PR independently as reviewer ${index + 1}.`,
         input.input.sourceRepoPath
       );
@@ -559,7 +559,14 @@ async function runImplementerFix(input: {
   });
   const pathPolicyBlock = resolvePathPolicyBlock(pathPolicyDecision);
   if (pathPolicyBlock) {
-    await blockRunForPathPolicy(input.input, input.runId, pathPolicyBlock, input.now);
+    await blockRunForPathPolicy(
+      input.input,
+      input.runId,
+      pathPolicyBlock,
+      WorkflowState.Fixing,
+      input.headSha,
+      input.now
+    );
   }
   const commit = await input.input.github.commitChanges({
     repo: input.input.event.repo,
@@ -769,16 +776,26 @@ function implementerEnvelope(
   };
 }
 
-function prReviewerEnvelope(input: RunIssueLifecycleInput, runId: string, pr: number, headSha: string, now: Date): TaskEnvelope {
+function prReviewerEnvelope(
+  input: RunIssueLifecycleInput,
+  runId: string,
+  pr: number,
+  headSha: string,
+  branch: string,
+  now: Date
+): TaskEnvelope {
   return {
-    ...baseEnvelope(input, runId, AgentRole.PrReviewer, { review: true }, now),
+    ...baseEnvelope(input, runId, AgentRole.PrReviewer, { review: true }, now, {
+      path: input.workspace.path,
+      branch
+    }),
     pr: {
       number: pr,
       title: input.issue.title,
       body: "PR body",
       head_sha: headSha,
       base_branch: input.repo.default_branch,
-      head_branch: input.workspace.branch
+      head_branch: branch
     }
   };
 }
@@ -915,6 +932,8 @@ async function blockRunForPathPolicy(
   input: RunIssueLifecycleInput,
   runId: string,
   block: PathPolicyBlock,
+  currentState: string,
+  headSha: string | null,
   now: Date
 ): Promise<never> {
   const errorCode = block.errorCode as ErrorCodeValue;
@@ -929,9 +948,9 @@ async function blockRunForPathPolicy(
   transition(
     input.database,
     runId,
-    WorkflowState.Implementing,
+    currentState,
     WorkflowState.Blocked,
-    null,
+    headSha,
     WorkflowEvent.PolicyBlock,
     now
   );

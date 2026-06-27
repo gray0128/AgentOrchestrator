@@ -35,6 +35,7 @@ export function createGitWorkspaceFixture(input: {
   runGit(sourceRepoPath, ["config", "user.name", "Fixture"]);
   runGit(sourceRepoPath, ["add", "."]);
   runGit(sourceRepoPath, ["commit", "-m", "seed"]);
+  runGit(sourceRepoPath, ["branch", "-M", "main"]);
 
   const plan = createWorkspacePlan({
     workspaceRoot,

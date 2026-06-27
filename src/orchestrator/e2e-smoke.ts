@@ -124,6 +124,7 @@ export function createSmokeWorkspaceFixture(): {
   runGit(sourceRepoPath, ["config", "user.name", "Smoke Test"]);
   runGit(sourceRepoPath, ["add", "docs/example.md"]);
   runGit(sourceRepoPath, ["commit", "-m", "seed"]);
+  runGit(sourceRepoPath, ["branch", "-M", "main"]);
   const plan = createWorkspacePlan({
     workspaceRoot,
     repoName: smokeRepo.name,
