@@ -52,7 +52,10 @@ import { shouldDiscardActor } from "./policy/actor-gate.ts";
 import { loadRepoPolicy } from "./policy/repo-policy-loader.ts";
 import type { LoadedRepoPolicy } from "./policy/repo-policy-loader.ts";
 import { buildReconciliationDryRunReport } from "./reconciliation/dry-run.ts";
-import { buildSchedulerReport } from "./reconciliation/scheduler.ts";
+import {
+  buildSchedulerReport,
+  buildSchedulerRunsForReport,
+} from "./reconciliation/scheduler.ts";
 import { sanitizeMarkdown } from "./security/redaction.ts";
 import { openReadOnlyStateDatabase } from "./state/sqlite-queries.ts";
 import {
@@ -509,8 +512,13 @@ async function runReconcile(
 
   const input = buildReconcileInput(flags);
   const report = buildReconciliationDryRunReport(input);
-  const scheduler = buildSchedulerReport({
+  const schedulerRuns = buildSchedulerRunsForReport({
     runs: input.runs,
+    issues: input.issues,
+    pullRequests: input.pullRequests,
+  });
+  const scheduler = buildSchedulerReport({
+    runs: schedulerRuns,
     now: input.now,
     maxRetries: parseOptionalPositiveIntegerFlag(flags, "maxRetries"),
   });
@@ -1714,6 +1722,31 @@ function ensureParentDirectory(path: string): void {
   }
 }
 
+function parseReconcileRunInput(value: unknown) {
+  if (!isRecord(value) || typeof value.runId !== "string" || typeof value.state !== "string") {
+    throw new Error("reconcile run entries require runId and state");
+  }
+
+  const repo = isRecord(value.repo) ? value.repo : undefined;
+  return {
+    runId: value.runId,
+    state: value.state,
+    leaseOwner: typeof value.leaseOwner === "string" ? value.leaseOwner : undefined,
+    leaseExpiresAt:
+      typeof value.leaseExpiresAt === "string" ? value.leaseExpiresAt : undefined,
+    retryCount: typeof value.retryCount === "number" ? value.retryCount : undefined,
+    lastErrorCode:
+      typeof value.lastErrorCode === "string" ? value.lastErrorCode : undefined,
+    repoOwner: typeof repo?.owner === "string" ? repo.owner : undefined,
+    repoName: typeof repo?.name === "string" ? repo.name : undefined,
+    issueNumber: typeof value.issue === "number" ? value.issue : undefined,
+    prNumber: typeof value.pr === "number" ? value.pr : undefined,
+    labels: Array.isArray(value.labels)
+      ? value.labels.filter((label): label is string => typeof label === "string")
+      : undefined,
+  };
+}
+
 function buildReconcileInput(flags: CliFlags) {
   const inputPath = stringFlag(flags, "input");
   if (inputPath) {
@@ -1724,7 +1757,7 @@ function buildReconcileInput(flags: CliFlags) {
     return {
       issues: Array.isArray(raw.issues) ? raw.issues : [],
       pullRequests: Array.isArray(raw.pullRequests) ? raw.pullRequests : [],
-      runs: Array.isArray(raw.runs) ? raw.runs : [],
+      runs: Array.isArray(raw.runs) ? raw.runs.map(parseReconcileRunInput) : [],
       now: typeof raw.now === "string" ? new Date(raw.now) : new Date(),
     };
   }

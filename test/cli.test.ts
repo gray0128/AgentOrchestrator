@@ -1055,6 +1055,93 @@ test("reconcile CLI reports dry-run candidates from input snapshot", async () =>
   assert.deepEqual(errors, []);
 });
 
+test("reconcile CLI apply skips recoverable runs blocked by issue labels from input snapshot", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "agent-orchestrator-cli-"));
+  const config = join(dir, "local.json");
+  const input = join(dir, "reconcile.json");
+  const databasePath = join(dir, "state.sqlite");
+  const output: string[] = [];
+  const errors: string[] = [];
+  const database = openStateDatabase(databasePath);
+  const now = new Date("2026-06-24T00:00:00.000Z");
+
+  try {
+    migrateStateDatabase(database);
+    insertWorkflowRun(database, {
+      runId: "run_pause_label",
+      repoOwner: "octo",
+      repoName: "repo",
+      issueNumber: 15,
+      state: WorkflowState.Planning,
+      idempotencyKey: "run_pause_label:create",
+      now,
+    });
+  } finally {
+    database.close();
+  }
+
+  writeFileSync(config, JSON.stringify(localConfig({ databasePath })), "utf8");
+  writeFileSync(
+    input,
+    JSON.stringify({
+      issues: [
+        {
+          repo: { owner: "octo", name: "repo" },
+          issue: 15,
+          state: "open",
+          labels: ["agent:autopilot", "agent:pause"],
+        },
+      ],
+      pullRequests: [],
+      runs: [
+        {
+          runId: "run_pause_label",
+          state: "planning",
+          repo: { owner: "octo", name: "repo" },
+          issue: 15,
+        },
+      ],
+      now: "2026-06-24T00:01:00.000Z",
+    }),
+    "utf8",
+  );
+
+  const exitCode = await runCli(
+    [
+      "reconcile",
+      "--apply",
+      "--config",
+      config,
+      "--input",
+      input,
+      "--lease-owner",
+      "scheduler-test",
+    ],
+    {
+      stdout: (line) => output.push(line),
+      stderr: (line) => errors.push(line),
+    },
+  );
+  const result = JSON.parse(output[0] ?? "{}");
+  const reopened = openStateDatabase(databasePath);
+
+  try {
+    const run = getWorkflowRunSnapshot(reopened, { runId: "run_pause_label" })?.run;
+
+    assert.equal(exitCode, 0);
+    assert.equal(result.command, "reconcile");
+    assert.deepEqual(result.scheduler, {
+      scheduled: 0,
+      skipped: 1,
+      applied: 0,
+    });
+    assert.equal(run?.lease_owner, null);
+    assert.deepEqual(errors, []);
+  } finally {
+    reopened.close();
+  }
+});
+
 test("reconcile CLI apply claims recoverable local runs and increments retry count", async () => {
   const dir = mkdtempSync(join(tmpdir(), "agent-orchestrator-cli-"));
   const config = join(dir, "local.json");

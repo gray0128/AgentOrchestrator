@@ -5,6 +5,16 @@ export const entryLabel = "agent:autopilot";
 
 export const controlLabels = new Set(["agent:pause", "agent:no-merge", "needs-human"]);
 
+export const schedulerBlockingLabels = new Set([
+  ...controlLabels,
+  "agent:blocked",
+  "agent:done",
+]);
+
+export function hasSchedulerBlockingLabels(labels: readonly string[]): boolean {
+  return labels.some((label) => schedulerBlockingLabels.has(label));
+}
+
 export const stateLabelByState = {
   [WorkflowState.Planning]: "agent:planning",
   [WorkflowState.PlanReviewing]: "agent:plan-review",

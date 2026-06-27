@@ -229,7 +229,9 @@ export type {
 export { buildReconciliationDryRunReport } from "./reconciliation/dry-run.ts";
 export {
   buildSchedulerReport,
+  buildSchedulerRunsForReport,
   decideSchedulerRun,
+  resolveSchedulerRunLabels,
 } from "./reconciliation/scheduler.ts";
 export {
   GitHubRestArtifactReader,
@@ -251,10 +253,15 @@ export type {
   ReconciliationRunInput,
   RepoRef,
 } from "./reconciliation/dry-run.ts";
+export {
+  hasSchedulerBlockingLabels,
+  schedulerBlockingLabels,
+} from "./state/labels.ts";
 export type {
   SchedulerReport,
   SchedulerRunDecision,
   SchedulerRunInput,
+  SchedulerRunLink,
 } from "./reconciliation/scheduler.ts";
 export type {
   GitHubArtifactFetch,
