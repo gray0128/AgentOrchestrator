@@ -226,6 +226,10 @@ export type {
 } from "./workspace/manager.ts";
 export { buildReconciliationDryRunReport } from "./reconciliation/dry-run.ts";
 export {
+  buildSchedulerReport,
+  decideSchedulerRun,
+} from "./reconciliation/scheduler.ts";
+export {
   GitHubRestArtifactReader,
   readGitHubRepairArtifacts,
   reconcileFromGitHubArtifacts,
@@ -245,6 +249,11 @@ export type {
   ReconciliationRunInput,
   RepoRef,
 } from "./reconciliation/dry-run.ts";
+export type {
+  SchedulerReport,
+  SchedulerRunDecision,
+  SchedulerRunInput,
+} from "./reconciliation/scheduler.ts";
 export type {
   GitHubArtifactFetch,
   GitHubArtifactReader,
@@ -271,9 +280,10 @@ export type {
 } from "./reconciliation/resume-context.ts";
 export type { FakeGitHubArtifactState } from "./github/fake-github-artifact-reader.ts";
 export {
-  acquireLease,
-  casUpdateRunState,
-  getDelivery,
+	  acquireLease,
+	  casUpdateRunState,
+	  claimScheduledRun,
+	  getDelivery,
   getWorkflowRunSnapshot,
   insertDeliveryIfAbsent,
   invalidateForNewHead,
@@ -309,8 +319,9 @@ export {
   syncStateLabels,
 } from "./state/labels.ts";
 export type {
-  AcquireLeaseInput,
-  CasUpdateRunStateInput,
+	  AcquireLeaseInput,
+	  CasUpdateRunStateInput,
+	  ClaimScheduledRunInput,
   DeliveryInsertInput,
   DeliveryRow,
   IdempotentActionInput,

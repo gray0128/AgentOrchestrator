@@ -140,9 +140,24 @@ export type WorkflowRunSnapshot = {
 
 export type WorkflowRunForReconciliation = {
   readonly runId: string;
+  readonly repoOwner: string;
+  readonly repoName: string;
+  readonly issueNumber: number;
   readonly state: string;
+  readonly retryCount: number;
   readonly leaseOwner?: string;
   readonly leaseExpiresAt?: string;
+  readonly lastErrorCode?: string;
+  readonly lastErrorMessage?: string;
+};
+
+export type ClaimScheduledRunInput = {
+  readonly runId: string;
+  readonly expectedState: string;
+  readonly leaseOwner: string;
+  readonly ttlMs: number;
+  readonly incrementRetry: boolean;
+  readonly now: Date;
 };
 
 export function openStateDatabase(path = ":memory:"): StateDatabase {
@@ -226,25 +241,43 @@ export function listWorkflowRunsForReconciliation(database: StateDatabase): read
     .prepare(
       `
         SELECT run_id,
+               repo_owner,
+               repo_name,
+               issue_number,
                state,
+               retry_count,
                lease_owner,
-               lease_expires_at
+               lease_expires_at,
+               last_error_code,
+               last_error_message
         FROM workflow_runs
         ORDER BY updated_at ASC, run_id ASC
       `
     )
     .all() as readonly {
     readonly run_id: string;
+    readonly repo_owner: string;
+    readonly repo_name: string;
+    readonly issue_number: number;
     readonly state: string;
+    readonly retry_count: number;
     readonly lease_owner: string | null;
     readonly lease_expires_at: string | null;
+    readonly last_error_code: string | null;
+    readonly last_error_message: string | null;
   }[];
 
   return rows.map((row) => ({
     runId: row.run_id,
+    repoOwner: row.repo_owner,
+    repoName: row.repo_name,
+    issueNumber: row.issue_number,
     state: row.state,
+    retryCount: row.retry_count,
     leaseOwner: row.lease_owner ?? undefined,
-    leaseExpiresAt: row.lease_expires_at ?? undefined
+    leaseExpiresAt: row.lease_expires_at ?? undefined,
+    lastErrorCode: row.last_error_code ?? undefined,
+    lastErrorMessage: row.last_error_message ?? undefined
   }));
 }
 
@@ -487,6 +520,37 @@ export function acquireLease(database: StateDatabase, input: AcquireLeaseInput):
         SET lease_owner = ?,
             lease_expires_at = ?,
             updated_at = ?
+        WHERE run_id = ?
+          AND state = ?
+          AND (
+            lease_owner IS NULL
+            OR lease_expires_at IS NULL
+            OR lease_expires_at <= ?
+          )
+      `
+    )
+    .run(
+      input.leaseOwner,
+      expiresAt,
+      input.now.toISOString(),
+      input.runId,
+      input.expectedState,
+      input.now.toISOString()
+    );
+
+  return result.changes === 1;
+}
+
+export function claimScheduledRun(database: StateDatabase, input: ClaimScheduledRunInput): boolean {
+  const expiresAt = new Date(input.now.getTime() + input.ttlMs).toISOString();
+  const retryClause = input.incrementRetry ? ", retry_count = retry_count + 1" : "";
+  const result = database
+    .prepare(
+      `
+        UPDATE workflow_runs
+        SET lease_owner = ?,
+            lease_expires_at = ?,
+            updated_at = ?${retryClause}
         WHERE run_id = ?
           AND state = ?
           AND (

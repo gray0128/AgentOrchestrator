@@ -954,6 +954,95 @@ test("reconcile CLI reports dry-run candidates from input snapshot", async () =>
   assert.deepEqual(errors, []);
 });
 
+test("reconcile CLI apply claims recoverable local runs and increments retry count", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "agent-orchestrator-cli-"));
+  const config = join(dir, "local.json");
+  const databasePath = join(dir, "state.sqlite");
+  const output: string[] = [];
+  const errors: string[] = [];
+  const database = openStateDatabase(databasePath);
+  const now = new Date("2026-06-24T00:00:00.000Z");
+
+  try {
+    migrateStateDatabase(database);
+    insertWorkflowRun(database, {
+      runId: "run_retry",
+      repoOwner: "octo",
+      repoName: "repo",
+      issueNumber: 13,
+      state: WorkflowState.Implementing,
+      idempotencyKey: "run_retry:create",
+      now,
+    });
+    insertWorkflowRun(database, {
+      runId: "run_paused",
+      repoOwner: "octo",
+      repoName: "repo",
+      issueNumber: 14,
+      state: WorkflowState.Paused,
+      idempotencyKey: "run_paused:create",
+      now,
+    });
+    database
+      .prepare(
+        `
+          UPDATE workflow_runs
+          SET retry_count = 1,
+              last_error_code = 'AGENT_PROCESS_FAILED',
+              last_error_message = 'agent failed'
+          WHERE run_id = 'run_retry'
+        `,
+      )
+      .run();
+  } finally {
+    database.close();
+  }
+
+  writeFileSync(config, JSON.stringify(localConfig({ databasePath })), "utf8");
+
+  const exitCode = await runCli(
+    [
+      "reconcile",
+      "--apply",
+      "--config",
+      config,
+      "--repo",
+      "octo/repo",
+      "--lease-owner",
+      "scheduler-test",
+      "--lease-ttl-ms",
+      "60000",
+    ],
+    {
+      stdout: (line) => output.push(line),
+      stderr: (line) => errors.push(line),
+    },
+  );
+  const result = JSON.parse(output[0] ?? "{}");
+  const reopened = openStateDatabase(databasePath);
+
+  try {
+    const retry = getWorkflowRunSnapshot(reopened, { runId: "run_retry" })?.run;
+    const paused = getWorkflowRunSnapshot(reopened, { runId: "run_paused" })?.run;
+
+    assert.equal(exitCode, 0);
+    assert.equal(result.command, "reconcile");
+    assert.equal(result.apply, true);
+    assert.deepEqual(result.scheduler, {
+      scheduled: 1,
+      skipped: 1,
+      applied: 1,
+    });
+    assert.equal(result.applied[0].claimed, true);
+    assert.equal(retry?.retry_count, 2);
+    assert.equal(retry?.lease_owner, "scheduler-test");
+    assert.equal(paused?.lease_owner, null);
+    assert.deepEqual(errors, []);
+  } finally {
+    reopened.close();
+  }
+});
+
 test("inspect-run CLI prints run state, transitions, actions, and stale head evidence", async () => {
   const dir = mkdtempSync(join(tmpdir(), "agent-orchestrator-cli-"));
   const config = join(dir, "local.json");

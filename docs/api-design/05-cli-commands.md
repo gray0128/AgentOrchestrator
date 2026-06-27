@@ -111,19 +111,30 @@ Verification:
 
 ### `ao reconcile`
 
-Runs one reconciliation pass. Current implementation supports dry-run mode from local SQLite runs or an input snapshot.
+Runs one reconciliation pass. Dry-run mode is side-effect free. Apply mode is the minimal scheduler entrypoint for local SQLite workflow runs: it claims recoverable runs by taking a lease and increments `retry_count` for retryable `GITHUB_RATE_LIMITED` / `AGENT_PROCESS_FAILED` errors.
 
 Flags:
 
 - `--repo <owner/name>`
 - `--issue <number>`
 - `--dry-run`
+- `--apply`
 - `--github-mode <mock|live>`: live mode requires GitHub App credentials and reads GitHub artifacts before repairing state.
 - `--input <path>`: optional JSON snapshot with `issues`, `pullRequests`, `runs`, and optional `now`.
+- `--lease-owner <owner>`: lease owner written by `--apply`; defaults to `reconcile:apply`.
+- `--lease-ttl-ms <milliseconds>`: scheduler lease duration; defaults to five minutes.
+- `--max-retries <count>`: retry budget for retryable local errors; defaults to 2.
 
 Output:
 
-- JSON summary containing examined runs, proposed transitions, and blocked reasons.
+- JSON summary containing examined runs, proposed transitions, scheduler decisions, skipped reasons, and applied lease claims.
+
+Rules:
+
+- Exactly one of `--dry-run` or `--apply` is required.
+- `--dry-run` never writes SQLite state.
+- `--apply` skips paused, blocked, terminal, active-lease, and retry-exhausted runs.
+- `--apply` does not run role agents directly; it prepares eligible runs for the lifecycle executor by claiming scheduler ownership.
 
 ### `ao validate`
 
