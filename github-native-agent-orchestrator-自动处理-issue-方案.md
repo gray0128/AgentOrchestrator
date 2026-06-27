@@ -841,9 +841,10 @@ MVP 不直接归一化、由替代机制覆盖：
 
 ## 10. Workflow 状态机
 
+Dispatch 入口（`issue.autopilot_requested`、`issue.comment_dispatch_requested`）在状态机之外先执行 Triage：判定 `scope` 和 `next_step`，写回 triage 评论，再按结果进入下表中的 `planning` 或其他 lifecycle 状态。Triage 不是 `workflow_runs.state` 持久化状态；状态词汇以 `docs/contracts/task-state-contracts.md` 为准。
+
 ```text
 new
-  -> triage (dispatch 入口；label / mention 触发)
   -> planning
   -> plan_reviewing
   -> implementing
@@ -866,7 +867,6 @@ new
 | 状态 | 含义 |
 | --- | --- |
 | new | Issue 已发现，但未开始 |
-| triage | Dispatch 入口；Triage 判定 scope 和 next_step，不写代码 |
 | planning | Planner 正在制定方案 |
 | plan_reviewing | Plan Reviewer 正在审核方案 |
 | implementing | Implementer 正在实现 |
@@ -996,7 +996,7 @@ new
 输出：
 
 - `TriageResult` JSON（`scope`、`next_step`、`reason`）
-- Issue triage 评论和 `role: triage` marker
+- Issue triage 评论：`role: orchestrator` marker（`verdict: ACCEPTED`）+ Agent Attribution Footer（`Role: triage`）+ 扩展 triage 字段（`scope`、`next_step`）
 
 约束：
 
@@ -1034,7 +1034,7 @@ new
 
 ### 12.1 评论 Marker
 
-所有 agent 和 merge gate 评论必须带 marker。`role` 允许值包括 `triage`、`planner`、`plan_reviewer`、`implementer`、`pr_reviewer`、`merge_agent`。
+所有 agent 和 merge gate 评论必须带 marker。Marker `role` 枚举以 `docs/contracts/schemas/agent-marker.schema.json` 为准：`orchestrator`、`planner`、`plan_reviewer`、`implementer`、`pr_reviewer`、`merge_agent`。Triage 结论使用 `role: orchestrator` marker，并在 Attribution Footer 中标注 `Role: triage`；`scope` / `next_step` 写在 marker 块外的 triage 评论正文中。
 
 ```markdown
 <!-- agent-orchestrator:v1
@@ -1049,7 +1049,7 @@ verdict: APPROVED
 
 | 字段 | 必填 | 示例 |
 | --- | --- | --- |
-| role | 是 | planner / triage / merge_agent |
+| role | 是 | orchestrator / planner / merge_agent |
 | issue | 是 | 123 |
 | run_id | 是 | run_abc |
 | verdict | 视角色而定 | APPROVED |
