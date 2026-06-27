@@ -655,13 +655,33 @@ export function recordRunLastError(database: StateDatabase, input: RecordRunLast
     .run(input.errorCode, input.errorMessage, input.now.toISOString(), input.runId);
 }
 
+export type IdempotentActionRecord = {
+  readonly idempotency_key: string;
+  readonly request_hash: string;
+  readonly response_ref: string | null;
+  readonly status: string;
+};
+
+export function getIdempotentActionRecord(
+  database: StateDatabase,
+  idempotencyKey: string
+): IdempotentActionRecord | undefined {
+  return database
+    .prepare(
+      `
+        SELECT idempotency_key, request_hash, response_ref, status
+        FROM idempotent_actions
+        WHERE idempotency_key = ?
+      `
+    )
+    .get(idempotencyKey) as IdempotentActionRecord | undefined;
+}
+
 export function recordIdempotentAction(
   database: StateDatabase,
   input: IdempotentActionInput
 ): IdempotentActionResult {
-  const existing = database
-    .prepare("SELECT request_hash FROM idempotent_actions WHERE idempotency_key = ?")
-    .get(input.idempotencyKey) as { readonly request_hash?: string } | undefined;
+  const existing = getIdempotentActionRecord(database, input.idempotencyKey);
 
   if (existing?.request_hash === input.requestHash) {
     return { outcome: "skipped" };

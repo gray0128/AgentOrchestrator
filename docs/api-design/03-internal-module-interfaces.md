@@ -56,7 +56,7 @@ Rules:
 
 - Every write method requires an idempotency key.
 - Every write method returns a GitHub reference suitable for `idempotent_actions.response_ref`.
-- Runtime lifecycle must record a completed `idempotent_actions` row for each material GitHub write using the adapter idempotency key and request hash.
+- Runtime lifecycle must route material GitHub writes through the idempotent write executor: pre-check local action rows, skip remote writes on replay, block on hash conflicts, and record completed rows using the adapter idempotency key and request hash.
 - Merge requires current PR head `sha`.
 - `readCheckSummary` returns evidence for the requested PR head and must not synthesize success for missing required checks.
 - `readPullRequestContext` is the merge-gate precheck read source for current PR head, mergeability, labels, current-head approvals, and required check evidence.

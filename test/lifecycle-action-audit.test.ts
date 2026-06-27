@@ -3,16 +3,24 @@ import test from "node:test";
 
 import {
   AgentRole,
+  ErrorCode,
   FakeAgentAdapter,
   FakeGitHubApiAdapter,
+  OrchestratorError,
   WorkflowState,
   createRequestHash,
+  getWorkflowRunSnapshot,
   insertWorkflowRun,
   migrateStateDatabase,
   openStateDatabase,
   recordIdempotentAction,
   runIssueLifecycle
 } from "../src/index.ts";
+import {
+  executeMaterialGitHubWrite,
+  recordCompletedMaterialAction,
+  replayGitHubWrite
+} from "../src/orchestrator/idempotent-github-write.ts";
 import { DomainEventType } from "../src/webhooks/domain-event.ts";
 import { createGitWorkspaceFixture, seedWorkspaceFile } from "./helpers/git-workspace-fixture.ts";
 
@@ -184,6 +192,120 @@ test("full lifecycle records material GitHub writes in idempotent_actions", asyn
   assert.ok(idempotencyKeys.includes(`${runId}:merge:delete-branch`), "missing delete branch idempotency key");
   assert.ok(idempotencyKeys.includes(`${runId}:merge:final-summary`), "missing final summary idempotency key");
   assert.ok(idempotencyKeys.includes(`${runId}:merge:close-issue`), "missing close issue idempotency key");
+});
+
+test("material write executor skips remote call when local completed row already exists", async () => {
+  const database = openStateDatabase();
+  migrateStateDatabase(database);
+  const github = new FakeGitHubApiAdapter();
+  const runId = "run_skip_remote";
+  const branch = "agent/issue-123-skip";
+  const idempotencyKey = `${runId}:implementer:create-branch`;
+  const requestHash = createRequestHash({ runId, branch });
+  const now = new Date("2026-06-24T08:00:00.000Z");
+  insertWorkflowRun(database, {
+    runId,
+    repoOwner: "octo",
+    repoName: "repo",
+    issueNumber: 123,
+    state: WorkflowState.Implementing,
+    idempotencyKey: `${runId}:create`,
+    now
+  });
+  recordIdempotentAction(database, {
+    idempotencyKey,
+    runId,
+    actionType: "create_branch",
+    targetType: "branch",
+    targetId: branch,
+    requestHash,
+    responseRef: `branch:${branch}`,
+    status: "completed",
+    now
+  });
+
+  const result = await executeMaterialGitHubWrite(
+    {
+      database,
+      runId,
+      actionType: "create_branch",
+      targetType: "branch",
+      targetId: branch,
+      idempotencyKey,
+      requestHash,
+      hashValue: { runId, branch },
+      now
+    },
+    {
+      execute: () =>
+        github.createBranch({
+          repo: { owner: "octo", name: "repo" },
+          branch,
+          baseSha: "base-sha",
+          idempotencyKey,
+          requestHash
+        }),
+      responseRef: (writeResult) => writeResult.responseRef,
+      replay: replayGitHubWrite
+    }
+  );
+
+  assert.equal(result.created, false);
+  assert.equal(result.responseRef, `branch:${branch}`);
+  assert.equal(github.branches.length, 0);
+});
+
+test("material write executor blocks lifecycle on request hash conflict", async () => {
+  const database = openStateDatabase();
+  migrateStateDatabase(database);
+  const runId = "run_hash_conflict";
+  const branch = "agent/issue-123-conflict";
+  const idempotencyKey = `${runId}:implementer:create-branch`;
+  const now = new Date("2026-06-24T08:00:00.000Z");
+  insertWorkflowRun(database, {
+    runId,
+    repoOwner: "octo",
+    repoName: "repo",
+    issueNumber: 123,
+    state: WorkflowState.Implementing,
+    idempotencyKey: `${runId}:create`,
+    now
+  });
+  recordIdempotentAction(database, {
+    idempotencyKey,
+    runId,
+    actionType: "create_branch",
+    targetType: "branch",
+    targetId: branch,
+    requestHash: createRequestHash({ runId, branch }),
+    responseRef: `branch:${branch}`,
+    status: "completed",
+    now
+  });
+
+  assert.throws(
+    () =>
+      recordCompletedMaterialAction(
+        database,
+        runId,
+        "create_branch",
+        "branch",
+        branch,
+        `branch:${branch}`,
+        { runId, branch, changed: true },
+        now,
+        idempotencyKey
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof OrchestratorError);
+      assert.equal(error.code, ErrorCode.IdempotencyConflict);
+      return true;
+    }
+  );
+
+  const snapshot = getWorkflowRunSnapshot(database, { runId });
+  assert.equal(snapshot?.run.state, WorkflowState.Blocked);
+  assert.equal(snapshot?.run.last_error_code, ErrorCode.IdempotencyConflict);
 });
 
 test("material write replay records local action when remote write already succeeded", async () => {
