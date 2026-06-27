@@ -8,7 +8,7 @@ The local data model supports deterministic scheduling, idempotency, lease owner
 
 ### `deliveries`
 
-Stores webhook delivery de-duplication.
+Stores webhook delivery de-duplication. `ao serve` writes rows through `SqliteDeliveryStore` before advancing workflow state; `ao ui` reads the same table for the deliveries page.
 
 | Column | Type | Required | Notes |
 | --- | --- | --- | --- |

@@ -60,9 +60,11 @@ import type { StateDatabase } from "./state/sqlite-store.ts";
 import { buildStaleHeadEvidence } from "./ui/stale-head.ts";
 import { defaultUiHost, defaultUiPort, startUiRuntime } from "./ui/server.ts";
 import {
-  InMemoryDeliveryStore,
+  SqliteDeliveryStore,
+  finalizeDeliveryStatus,
   recordDeliveryOnce,
 } from "./webhooks/delivery-deduper.ts";
+import type { DeliveryStore } from "./webhooks/delivery-deduper.ts";
 import { DomainEventType, mentionsDispatchTrigger, normalizeGitHubWebhook } from "./webhooks/domain-event.ts";
 import type { DomainEvent } from "./webhooks/domain-event.ts";
 import {
@@ -1025,7 +1027,7 @@ function commandExists(command: string): boolean {
 export async function startServeRuntime(
   input: ServeRuntimeOptions,
 ): Promise<ServeRuntime> {
-  const deliveryStore = new InMemoryDeliveryStore();
+  const deliveryStore = new SqliteDeliveryStore(input.database);
   const github = input.github ?? new FakeGitHubApiAdapter();
   const server = createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/healthz") {
@@ -1089,7 +1091,7 @@ async function handleWebhookRequest(input: {
     end: (body: string) => void;
   };
   readonly webhookSecret: string | undefined;
-  readonly deliveryStore: InMemoryDeliveryStore;
+  readonly deliveryStore: DeliveryStore;
   readonly database: StateDatabase;
   readonly github: GitHubApiAdapter;
   readonly policySummary: string;
@@ -1105,6 +1107,7 @@ async function handleWebhookRequest(input: {
     return;
   }
 
+  let acceptedDeliveryId: string | undefined;
   try {
     const payload = await readRequestBody(
       input.request,
@@ -1129,6 +1132,7 @@ async function handleWebhookRequest(input: {
     }
 
     const parsedPayload = JSON.parse(payload.toString("utf8"));
+    const repo = extractRepoFromPayload(parsedPayload);
     const delivery = await recordDeliveryOnce(input.deliveryStore, {
       deliveryId,
       eventName,
@@ -1136,6 +1140,8 @@ async function handleWebhookRequest(input: {
         isRecord(parsedPayload) && typeof parsedPayload.action === "string"
           ? parsedPayload.action
           : undefined,
+      repoOwner: repo.repoOwner,
+      repoName: repo.repoName,
     });
     if (!delivery.accepted) {
       writeJson(input.response, 200, {
@@ -1146,6 +1152,7 @@ async function handleWebhookRequest(input: {
       });
       return;
     }
+    acceptedDeliveryId = deliveryId;
 
     const domainEvent = normalizeGitHubWebhook({
       eventName,
@@ -1159,6 +1166,9 @@ async function handleWebhookRequest(input: {
       isActorGatedDomainEvent(domainEvent) &&
       isActorDiscardedByPolicy(domainEvent, input.lifecycle.repositories)
     ) {
+      await finalizeDeliveryStatus(input.deliveryStore, deliveryId, {
+        status: "ignored",
+      });
       writeJson(input.response, 202, {
         ok: true,
         ignored: true,
@@ -1194,6 +1204,9 @@ async function handleWebhookRequest(input: {
           github: input.github,
           policySummary: input.policySummary,
         });
+    await finalizeDeliveryStatus(input.deliveryStore, deliveryId, {
+      status: "processed",
+    });
     writeJson(input.response, 202, {
       ok: true,
       duplicate: false,
@@ -1201,6 +1214,19 @@ async function handleWebhookRequest(input: {
       advancement,
     });
   } catch (error) {
+    if (acceptedDeliveryId) {
+      const code =
+        error instanceof Error && "code" in error
+          ? String(error.code)
+          : ErrorCode.WebhookPayloadInvalid;
+      await finalizeDeliveryStatus(input.deliveryStore, acceptedDeliveryId, {
+        status: "failed",
+        errorCode: code as ErrorCode,
+        errorMessage: sanitizeMarkdown(
+          error instanceof Error ? error.message : String(error),
+        ),
+      });
+    }
     const code =
       error instanceof Error && "code" in error
         ? String(error.code)
@@ -1213,6 +1239,26 @@ async function handleWebhookRequest(input: {
       ),
     });
   }
+}
+
+function extractRepoFromPayload(payload: unknown): {
+  readonly repoOwner?: string;
+  readonly repoName?: string;
+} {
+  if (!isRecord(payload)) {
+    return {};
+  }
+  const repository = payload.repository;
+  if (!isRecord(repository)) {
+    return {};
+  }
+  const repoOwner =
+    isRecord(repository.owner) && typeof repository.owner.login === "string"
+      ? repository.owner.login
+      : undefined;
+  const repoName =
+    typeof repository.name === "string" ? repository.name : undefined;
+  return { repoOwner, repoName };
 }
 
 function isActorGatedDomainEvent(event: DomainEvent): boolean {
