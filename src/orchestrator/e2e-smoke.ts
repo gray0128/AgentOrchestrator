@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import type { RepoPolicy } from "../contracts/validation.ts";
 import type { GitHubApiAdapter } from "../github/api.ts";
@@ -9,19 +9,32 @@ import type { StateDatabase, WorkflowRunSnapshot } from "../state/sqlite-store.t
 import { DomainEventType } from "../webhooks/domain-event.ts";
 import type { DomainEvent } from "../webhooks/domain-event.ts";
 import { createWorkspacePlan } from "../workspace/manager.ts";
+import { buildDispatchInput, dispatchIssueWork } from "./issue-dispatch.ts";
+import type { DispatchIssueWorkResult } from "./issue-dispatch.ts";
 import { runIssueLifecycle } from "./runtime-lifecycle.ts";
-import type { RuntimeLifecycleAgents, RuntimeLifecycleWorkspace } from "./runtime-lifecycle.ts";
+import type {
+  RuntimeLifecycleAgents,
+  RuntimeLifecycleIssue,
+  RuntimeLifecycleWorkspace,
+  RunIssueLifecycleInput
+} from "./runtime-lifecycle.ts";
 
 export type MockedEndToEndSmokeInput = {
   readonly database: StateDatabase;
   readonly github: GitHubApiAdapter;
   readonly agents: RuntimeLifecycleAgents;
+  readonly issue?: RuntimeLifecycleIssue;
   readonly requiredPrApprovals?: number;
   readonly policy?: RepoPolicy;
   readonly now?: Date;
   readonly workspace?: RuntimeLifecycleWorkspace;
   readonly workspaceRoot?: string;
   readonly sourceRepoPath?: string;
+};
+
+export type MockedDispatchSmokeInput = MockedEndToEndSmokeInput & {
+  readonly trigger?: "label" | "mention";
+  readonly triggerComment?: string;
 };
 
 export type MockedEndToEndSmokeResult = {
@@ -34,7 +47,7 @@ export type MockedEndToEndSmokeResult = {
 };
 
 const smokeRepo = { owner: "octo", name: "repo", default_branch: "main" };
-const smokeIssue = {
+const smokeIssue: RuntimeLifecycleIssue = {
   number: 123,
   title: "Low-risk docs update",
   body: "Update a low-risk documentation file.",
@@ -73,14 +86,28 @@ const smokePolicy: RepoPolicy = {
 };
 
 export async function runMockedEndToEndSmoke(input: MockedEndToEndSmokeInput): Promise<MockedEndToEndSmokeResult> {
+  const lifecycleInput = buildMockedSmokeLifecycleInput(input);
+  return runIssueLifecycle(lifecycleInput);
+}
+
+export async function runMockedDispatchSmoke(input: MockedDispatchSmokeInput): Promise<DispatchIssueWorkResult> {
+  const lifecycleInput = buildMockedSmokeLifecycleInput(input);
+  return dispatchIssueWork(
+    buildDispatchInput(lifecycleInput, lifecycleInput.agents, input.trigger ?? "label", input.triggerComment)
+  );
+}
+
+function buildMockedSmokeLifecycleInput(input: MockedEndToEndSmokeInput): RunIssueLifecycleInput {
   const now = input.now ?? new Date();
-  const fixture = input.workspace && input.workspaceRoot && input.sourceRepoPath
-    ? {
-        workspace: input.workspace,
-        workspaceRoot: input.workspaceRoot,
-        sourceRepoPath: input.sourceRepoPath
-      }
-    : createSmokeWorkspaceFixture();
+  const issue = input.issue ?? smokeIssue;
+  const fixture =
+    input.workspace && input.workspaceRoot && input.sourceRepoPath
+      ? {
+          workspace: input.workspace,
+          workspaceRoot: input.workspaceRoot,
+          sourceRepoPath: input.sourceRepoPath
+        }
+      : createSmokeWorkspaceFixture(issue);
   const basePolicy = input.policy ?? smokePolicy;
   const policy =
     input.requiredPrApprovals === undefined
@@ -92,23 +119,23 @@ export async function runMockedEndToEndSmoke(input: MockedEndToEndSmokeInput): P
             required_pr_approvals: input.requiredPrApprovals
           }
         };
-  return runIssueLifecycle({
+  return {
     database: input.database,
     github: input.github,
     agents: input.agents,
-    event: smokeDomainEvent(now),
+    event: smokeDomainEvent(issue, now),
     repo: smokeRepo,
-    issue: smokeIssue,
+    issue,
     workspace: fixture.workspace,
     workspaceRoot: fixture.workspaceRoot,
     sourceRepoPath: fixture.sourceRepoPath,
     policy,
     policySummary: "low-risk docs policy",
     now
-  });
+  };
 }
 
-export function createSmokeWorkspaceFixture(): {
+export function createSmokeWorkspaceFixture(issue: RuntimeLifecycleIssue = smokeIssue): {
   readonly workspace: RuntimeLifecycleWorkspace;
   readonly workspaceRoot: string;
   readonly sourceRepoPath: string;
@@ -128,8 +155,8 @@ export function createSmokeWorkspaceFixture(): {
   const plan = createWorkspacePlan({
     workspaceRoot,
     repoName: smokeRepo.name,
-    issue: smokeIssue.number,
-    issueTitle: smokeIssue.title
+    issue: issue.number,
+    issueTitle: issue.title
   });
   return {
     workspace: {
@@ -141,14 +168,14 @@ export function createSmokeWorkspaceFixture(): {
   };
 }
 
-function smokeDomainEvent(now: Date): DomainEvent {
+function smokeDomainEvent(issue: RuntimeLifecycleIssue, now: Date): DomainEvent {
   return {
     schema: "agent-orchestrator.domain-event.v1",
     event_type: DomainEventType.IssueAutopilotRequested,
     delivery_id: "smoke-delivery-1",
     repo: { owner: smokeRepo.owner, name: smokeRepo.name },
-    issue: smokeIssue.number,
-    actor: smokeIssue.author,
+    issue: issue.number,
+    actor: issue.author,
     source: "webhook",
     created_at: now.toISOString()
   };
