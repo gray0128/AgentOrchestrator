@@ -84,3 +84,16 @@ Reconciliation scans:
 - PRs or issues marked `agent:merge-ready` but not merged or closed.
 
 Reconciliation may bind existing markers, branches, PRs, reviews, and checks. It must not bypass pause/no-merge/needs-human labels.
+
+## Resume Context Contract
+
+Resume paths must rebuild merge evidence from GitHub artifacts instead of synthesizing stub plan reviews or implementation results.
+
+Required evidence before merge resume:
+
+- Planner marker in issue comments (`role: planner`, matching `run_id`).
+- Approved plan review marker in issue comments (`role: plan_reviewer`, `verdict: APPROVED`, matching `run_id`).
+- Implementer marker in the bound PR body (`role: implementer`, matching `run_id`, `pr`, and current `head_sha`).
+- Current-head PR review marker when resuming from `ci_waiting` or `merge_ready` (`role: pr_reviewer`, `verdict: APPROVED`, matching current `head_sha`).
+
+Missing required evidence transitions the run to `blocked` with `WORKFLOW_ARTIFACT_MISSING`. The orchestrator must not fabricate approval or implementation summaries for merge gates.

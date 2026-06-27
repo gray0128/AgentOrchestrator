@@ -21,7 +21,9 @@ import {
 import type { ErrorCode as ErrorCodeValue } from "../src/errors.ts";
 import { buildDispatchInput } from "../src/orchestrator/issue-dispatch.ts";
 import { DomainEventType } from "../src/webhooks/domain-event.ts";
+import { fakeGitHubArtifactReader } from "../src/github/fake-github-artifact-reader.ts";
 import { createGitWorkspaceFixture, seedWorkspaceFile } from "./helpers/git-workspace-fixture.ts";
+import { buildResumeArtifactState } from "./helpers/resume-artifact-fixture.ts";
 
 const runId = "run_octo_repo_issue_123";
 const repo = { owner: "octo", name: "repo", default_branch: "main" };
@@ -144,10 +146,19 @@ function lifecycleAgents(options?: {
   };
 }
 
+const resumeArtifacts = buildResumeArtifactState({
+  runId,
+  issue: issue.number,
+  pr: 1,
+  headSha: "fake-head",
+  branch: "agent/issue-123-low-risk-docs-update"
+});
+
 function lifecycleInput(options?: {
   readonly agents?: ReturnType<typeof lifecycleAgents>;
   readonly labels?: readonly string[];
   readonly policyOverride?: typeof policy;
+  readonly resumeArtifacts?: ReturnType<typeof buildResumeArtifactState> | null;
 }) {
   const fixture = createGitWorkspaceFixture({
     repoName: repo.name,
@@ -158,6 +169,7 @@ function lifecycleInput(options?: {
   migrateStateDatabase(database);
   const github = new FakeGitHubApiAdapter();
   const agents = options?.agents ?? lifecycleAgents();
+  const artifactState = options?.resumeArtifacts === null ? undefined : (options?.resumeArtifacts ?? resumeArtifacts);
 
   return {
     database,
@@ -165,6 +177,7 @@ function lifecycleInput(options?: {
     input: {
       database,
       github,
+      artifactReader: artifactState ? fakeGitHubArtifactReader(github, artifactState) : undefined,
       agents,
       event,
       repo,
@@ -421,6 +434,64 @@ test("runtime lifecycle maps missing resume run to LOCAL_RUN_NOT_FOUND", async (
     ErrorCode.LocalRunNotFound,
     /Workflow run missing for resume/
   );
+});
+
+test("runtime lifecycle blocks resume when required GitHub artifacts are missing", async () => {
+  const { database, input } = lifecycleInput({ resumeArtifacts: null });
+  seedResumeRun(database, {
+    state: WorkflowState.CiWaiting,
+    headSha: "fake-head",
+    prNumber: 1
+  });
+
+  await assertLifecycleError(
+    () => runIssueLifecycleFromStep(input, "ci_waiting", runId),
+    ErrorCode.WorkflowArtifactMissing,
+    /artifact reader/
+  );
+});
+
+test("runtime lifecycle resumes merge from recovered GitHub artifacts", async () => {
+  const { database, github, input } = lifecycleInput();
+  seedResumeRun(database, {
+    state: WorkflowState.CiWaiting,
+    headSha: "fake-head",
+    prNumber: 1
+  });
+  github.checkSummaries.set("octo/repo#1@fake-head", {
+    responseRef: "checks:1:fake-head",
+    headSha: "fake-head",
+    checks: [{ name: "npm run check", conclusion: "success" }]
+  });
+
+  const result = await runIssueLifecycleFromStep(input, "ci_waiting", runId);
+
+  assert.equal(result.mergeSha, "merge-1");
+  assert.equal(result.snapshot.run.state, WorkflowState.IssueClosed);
+});
+
+test("runtime lifecycle blocks merge resume when plan marker is missing", async () => {
+  const { database, input } = lifecycleInput({
+    resumeArtifacts: {
+      comments: [],
+      pullRequests: resumeArtifacts.pullRequests,
+      reviews: resumeArtifacts.reviews
+    }
+  });
+  seedResumeRun(database, {
+    state: WorkflowState.MergeReady,
+    headSha: "fake-head",
+    prNumber: 1
+  });
+
+  await assertLifecycleError(
+    () => runIssueLifecycleFromStep(input, "merge_ready", runId),
+    ErrorCode.WorkflowArtifactMissing,
+    /plan_marker/
+  );
+
+  const snapshot = getWorkflowRunSnapshot(database, { runId });
+  assert.equal(snapshot?.run.state, WorkflowState.Blocked);
 });
 
 test("runtime lifecycle maps missing PR binding to WORKFLOW_ARTIFACT_MISSING", async () => {

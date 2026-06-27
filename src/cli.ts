@@ -34,6 +34,8 @@ import {
   resolveGitHubAppCredentials,
 } from "./github/auth.ts";
 import { FakeGitHubApiAdapter } from "./github/fake-github-api.ts";
+import { GitHubRestArtifactReader } from "./reconciliation/github-artifacts.ts";
+import type { GitHubArtifactReader } from "./reconciliation/github-artifacts.ts";
 import type { GitHubApiAdapter } from "./github/api.ts";
 import { GitHubRestApiAdapter } from "./github/rest-github-api.ts";
 import { buildDispatchInput, dispatchIssueWork } from "./orchestrator/issue-dispatch.ts";
@@ -104,6 +106,7 @@ export type ServeLifecycleOptions = {
   readonly agents: RuntimeLifecycleAgentsWithTriage;
   readonly repositories: readonly ServeLifecycleRepository[];
   readonly workspaceRoot: string;
+  readonly artifactReader?: GitHubArtifactReader;
 };
 
 export type ServeLifecycleRepository = {
@@ -861,6 +864,11 @@ function buildServeRuntimeDependencies(
     fetch: globalThis.fetch as never,
     apiBaseUrl: credentials.apiBaseUrl,
   });
+  const artifactReader = new GitHubRestArtifactReader({
+    tokenProvider,
+    fetch: globalThis.fetch as never,
+    apiBaseUrl: credentials.apiBaseUrl,
+  });
   const repositories = config.repositories.map((repo) => {
     const loaded = loadRepoPolicy(repo);
     return {
@@ -881,6 +889,7 @@ function buildServeRuntimeDependencies(
       agents: buildProcessAgents(config),
       repositories,
       workspaceRoot: resolve(config.workspaces.root),
+      artifactReader,
     },
     policySummary: "live repo policy accepted",
   };
@@ -1345,6 +1354,7 @@ function buildDispatchContext(
   const lifecycleInput: RunIssueLifecycleInput = {
     database,
     github,
+    artifactReader: lifecycle.artifactReader,
     agents: lifecycle.agents,
     event,
     repo: repository.repo,
