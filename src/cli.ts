@@ -57,7 +57,10 @@ import {
   buildSchedulerRunsForReport,
 } from "./reconciliation/scheduler.ts";
 import { sanitizeMarkdown } from "./security/redaction.ts";
-import { openReadOnlyStateDatabase } from "./state/sqlite-queries.ts";
+import {
+  listWorkflowRuns,
+  openReadOnlyStateDatabase,
+} from "./state/sqlite-queries.ts";
 import {
 	  getWorkflowRunSnapshot,
 	  getWorkflowRunSnapshotByPullRequest,
@@ -69,6 +72,7 @@ import {
 import type { StateDatabase } from "./state/sqlite-store.ts";
 import { WorkflowState } from "./state/state-machine.ts";
 import { buildStaleHeadEvidence } from "./ui/stale-head.ts";
+import { runUiBrowserSmoke } from "./ui/browser-smoke.ts";
 import { defaultUiHost, defaultUiPort, startUiRuntime } from "./ui/server.ts";
 import {
   SqliteDeliveryStore,
@@ -170,6 +174,9 @@ export async function runCli(
     }
     if (command === "ui") {
       return await runUi(rest, io);
+    }
+    if (command === "ui-browser-smoke") {
+      return await runUiBrowserSmokeCommand(rest, io);
     }
     io.stderr(`Unsupported command: ${command}\n\n${renderHelp()}`);
     return 1;
@@ -642,6 +649,47 @@ async function runUi(args: readonly string[], io: CliIo): Promise<number> {
   );
   await waitForShutdown(runtime);
   return 0;
+}
+
+async function runUiBrowserSmokeCommand(
+  args: readonly string[],
+  io: CliIo,
+): Promise<number> {
+  const flags = parseFlags(args);
+  const config = loadValidLocalConfig(flags);
+  const databasePath = stringFlag(flags, "db") ?? config.database.path;
+  const host = stringFlag(flags, "host") ?? defaultUiHost;
+  const port = Number(stringFlag(flags, "port") ?? defaultUiPort);
+  const headed = hasFlag(flags, "headed");
+  const database = openReadOnlyStateDatabase(databasePath);
+
+  const configuredRunId = stringFlag(flags, "run-id");
+  const discoveredRunId = listWorkflowRuns(database, { limit: 1 }).items[0]?.runId;
+  const runId = configuredRunId ?? discoveredRunId;
+  if (!runId) {
+    throw new Error(
+      `${ErrorCode.LocalRunNotFound}: ui-browser-smoke requires at least one workflow run or --run-id`,
+    );
+  }
+
+  const runtime = await startUiRuntime({
+    host,
+    port,
+    database,
+    databasePath,
+  });
+
+  try {
+    const result = await runUiBrowserSmoke({
+      baseUrl: runtime.baseUrl,
+      runId,
+      headed,
+    });
+    io.stdout(JSON.stringify(result));
+    return result.ok ? 0 : 1;
+  } finally {
+    await runtime.close();
+  }
 }
 
 type GitHubMode = "mock" | "live";
@@ -1925,6 +1973,7 @@ function renderHelp(): string {
     "  ao reconcile --config <path> (--dry-run | --apply)",
     "  ao inspect-run --config <path> (--run-id <id> | --repo <owner/name> --issue <number>)",
     "  ao ui --config <path> [--host 127.0.0.1] [--port 23847]",
+    "  ao ui-browser-smoke --config <path> [--run-id <id>] [--headed]",
     "",
     "First run:",
     "  ao init-config --repo gray0128/claw-owner-task --repo-path /path/to/checkout",

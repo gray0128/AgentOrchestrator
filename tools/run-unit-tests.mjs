@@ -2,7 +2,12 @@ import { spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 
 const files = readdirSync("test")
-  .filter((name) => name.endsWith(".test.ts") && name !== "e2e-smoke.test.ts")
+  .filter(
+    (name) =>
+      name.endsWith(".test.ts") &&
+      name !== "e2e-smoke.test.ts" &&
+      name !== "ui-browser-smoke.test.ts",
+  )
   .sort()
   .map((name) => `test/${name}`);
 
