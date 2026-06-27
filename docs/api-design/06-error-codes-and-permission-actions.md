@@ -33,6 +33,8 @@
 | `LOCAL_RUN_NOT_FOUND` | No | No | Local UI or inspect query found no matching workflow run. |
 | `LOCAL_QUERY_INVALID` | No | No | Local UI query parameters are missing or malformed. |
 | `LOCAL_DB_UNAVAILABLE` | Yes | No | SQLite file is missing or unreadable for local UI reads. |
+| `WORKFLOW_ARTIFACT_MISSING` | No | Yes | Resume or closeout requires workflow artifacts such as PR binding or a persisted run snapshot. |
+| `WORKFLOW_STATE_CONFLICT` | Yes | Maybe | Expected workflow state or head sha did not match during lifecycle transition. |
 | `WORKSPACE_PATH_ESCAPE` | No | Yes | Workspace path or branch does not stay under the configured workspace root/plan. |
 | `WORKSPACE_PREPARE_FAILED` | No | Yes | Controlled worktree preparation failed, including unresolved base branch sha. Blocks GitHub branch/commit writes. |
 | `WORKSPACE_DIFF_EMPTY` | No | Yes | Implementer worktree has no actual git diff. |
