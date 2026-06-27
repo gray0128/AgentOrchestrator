@@ -17,6 +17,7 @@
     "format": "node tools/format-check.mjs --write",
     "format:check": "node tools/format-check.mjs",
     "schema:check": "node tools/check-schemas.mjs",
+    "smoke:cli": "node --experimental-strip-types --test test/cli-smoke.test.ts",
     "smoke:e2e": "node --experimental-strip-types --test test/e2e-smoke.test.ts",
     "smoke:ui": "node --experimental-strip-types --test test/ui-browser-smoke.test.ts",
     "test": "node --experimental-strip-types --test test/**/*.test.ts",

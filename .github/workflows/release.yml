@@ -59,6 +59,10 @@ jobs:
           AO_SEA_OUTPUT: dist/${{ matrix.executable }}
         run: node tools/build/build-sea.mjs
 
+      - name: Smoke test release binary
+        shell: bash
+        run: node tools/run-cli-smoke.mjs --binary dist/${{ matrix.executable }} --skip-link
+
       - name: Package archive (Unix)
         if: runner.os != 'Windows'
         run: |
