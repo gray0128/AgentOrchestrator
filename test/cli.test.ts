@@ -19,7 +19,9 @@ import {
   startServeRuntime,
   createSignature,
 } from "../src/index.ts";
+import { fakeGitHubArtifactReader } from "../src/github/fake-github-artifact-reader.ts";
 import { createGitWorkspaceFixture, seedWorkspaceFile } from "./helpers/git-workspace-fixture.ts";
+import { buildResumeArtifactState } from "./helpers/resume-artifact-fixture.ts";
 
 test("help CLI lists productized setup commands", async () => {
   const output: string[] = [];
@@ -770,6 +772,128 @@ test("serve runtime can run full lifecycle when lifecycle adapters are configure
     });
     assert.equal(snapshot?.run.state, WorkflowState.IssueClosed);
     assert.equal(snapshot?.run.pr_number, 1);
+    assert.equal(github.closedIssues.length, 1);
+  } finally {
+    await runtime.close();
+  }
+});
+
+test("serve runtime resumes ci_waiting from workflow_run webhook", async (context) => {
+  const fixture = createGitWorkspaceFixture({
+    repoName: "repo",
+    issue: 123,
+    issueTitle: "Low-risk docs update",
+  });
+  const database = openStateDatabase();
+  migrateStateDatabase(database);
+  const github = new FakeGitHubApiAdapter();
+  let runtime;
+  try {
+    runtime = await startServeRuntime({
+      host: "127.0.0.1",
+      port: 0,
+      database,
+      databasePath: ":memory:",
+      webhookSecret: "secret",
+      github,
+      lifecycle: {
+        agents: lifecycleAgents(),
+        workspaceRoot: fixture.workspaceRoot,
+        artifactReader: fakeGitHubArtifactReader(
+          github,
+          buildResumeArtifactState({
+            runId: "run_octo_repo_issue_123",
+            issue: 123,
+            pr: 1,
+            headSha: "fake-1",
+            branch: "agent/issue-123-low-risk-docs-update",
+          }),
+        ),
+        repositories: [
+          {
+            repo: { owner: "octo", name: "repo", default_branch: "main" },
+            localPath: fixture.sourceRepoPath,
+            policyPath: "/tmp/repo/.github/agent-orchestrator.json",
+            policy: repoPolicy(),
+          },
+        ],
+      },
+    });
+  } catch (error) {
+    database.close();
+    if (error instanceof Error && "code" in error && error.code === "EPERM") {
+      context.skip("sandbox does not allow binding a local TCP listener");
+      return;
+    }
+    throw error;
+  }
+
+  try {
+    const issuePayload = JSON.stringify({
+      action: "labeled",
+      label: { name: "agent:autopilot" },
+      repository: { name: "repo", owner: { login: "octo" } },
+      issue: {
+        number: 123,
+        title: "Low-risk docs update",
+        body: "Update docs.",
+        user: { login: "alice" },
+        labels: [{ name: "agent:autopilot" }],
+      },
+      sender: { login: "alice" },
+    });
+    const issueResponse = await fetch(
+      `http://${runtime.host}:${runtime.port}/webhook`,
+      {
+        method: "POST",
+        headers: {
+          "x-github-event": "issues",
+          "x-github-delivery": "delivery-workflow-resume-start",
+          "x-hub-signature-256": createSignature(issuePayload, "secret"),
+        },
+        body: issuePayload,
+      },
+    );
+    const issueBody = await issueResponse.json();
+
+    assert.equal(issueResponse.status, 202);
+    assert.equal(issueBody.advancement.dispatched, true);
+    assert.equal(issueBody.advancement.lifecycle?.mergeSha, undefined);
+    assert.equal(github.closedIssues.length, 0);
+    assert.equal(getWorkflowRunSnapshot(database, { runId: "run_octo_repo_issue_123" })?.run.state, WorkflowState.CiWaiting);
+
+    github.checkSummaries.set("octo/repo#1@fake-1", {
+      responseRef: "checks:1:fake-1",
+      headSha: "fake-1",
+      checks: [{ name: "npm run check", conclusion: "success" }],
+    });
+    const workflowPayload = JSON.stringify({
+      action: "completed",
+      repository: { name: "repo", owner: { login: "octo" } },
+      workflow_run: {
+        conclusion: "success",
+        head_sha: "fake-1",
+        pull_requests: [{ number: 1 }],
+      },
+      sender: { login: "alice" },
+    });
+    const workflowResponse = await fetch(
+      `http://${runtime.host}:${runtime.port}/webhook`,
+      {
+        method: "POST",
+        headers: {
+          "x-github-event": "workflow_run",
+          "x-github-delivery": "delivery-workflow-resume-success",
+          "x-hub-signature-256": createSignature(workflowPayload, "secret"),
+        },
+        body: workflowPayload,
+      },
+    );
+    const workflowBody = await workflowResponse.json();
+
+    assert.equal(workflowResponse.status, 202);
+    assert.equal(workflowBody.advancement.mergeSha, "merge-1");
+    assert.equal(getWorkflowRunSnapshot(database, { runId: "run_octo_repo_issue_123" })?.run.state, WorkflowState.IssueClosed);
     assert.equal(github.closedIssues.length, 1);
   } finally {
     await runtime.close();

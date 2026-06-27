@@ -40,11 +40,12 @@ import type { GitHubApiAdapter } from "./github/api.ts";
 import { GitHubRestApiAdapter } from "./github/rest-github-api.ts";
 import { buildDispatchInput, dispatchIssueWork } from "./orchestrator/issue-dispatch.ts";
 import type { RuntimeLifecycleAgentsWithTriage } from "./orchestrator/issue-dispatch.ts";
-import type {
-  RunIssueLifecycleInput,
-  RuntimeLifecycleIssue,
-  RuntimeLifecycleRepo,
-  RuntimeLifecycleWorkspace,
+import {
+  runIssueLifecycleFromStep,
+  type RunIssueLifecycleInput,
+  type RuntimeLifecycleIssue,
+  type RuntimeLifecycleRepo,
+  type RuntimeLifecycleWorkspace,
 } from "./orchestrator/runtime-lifecycle.ts";
 import { advanceWebhookEvent } from "./orchestrator/webhook-runtime.ts";
 import { shouldDiscardActor } from "./policy/actor-gate.ts";
@@ -55,11 +56,13 @@ import { sanitizeMarkdown } from "./security/redaction.ts";
 import { openReadOnlyStateDatabase } from "./state/sqlite-queries.ts";
 import {
   getWorkflowRunSnapshot,
+  getWorkflowRunSnapshotByPullRequest,
   listWorkflowRunsForReconciliation,
   migrateStateDatabase,
   openStateDatabase,
 } from "./state/sqlite-store.ts";
 import type { StateDatabase } from "./state/sqlite-store.ts";
+import { WorkflowState } from "./state/state-machine.ts";
 import { buildStaleHeadEvidence } from "./ui/stale-head.ts";
 import { defaultUiHost, defaultUiPort, startUiRuntime } from "./ui/server.ts";
 import {
@@ -1222,14 +1225,20 @@ async function handleWebhookRequest(input: {
           )
         : undefined;
     const advancement = dispatchContext
-      ? await dispatchIssueWork(
-          buildDispatchInput(
+      ? dispatchContext.kind === "resume"
+        ? await runIssueLifecycleFromStep(
             dispatchContext.lifecycleInput,
-            input.lifecycle!.agents,
-            dispatchContext.trigger,
-            dispatchContext.triggerComment,
-          ),
-        )
+            "ci_waiting",
+            dispatchContext.runId,
+          )
+        : await dispatchIssueWork(
+            buildDispatchInput(
+              dispatchContext.lifecycleInput,
+              input.lifecycle!.agents,
+              dispatchContext.trigger,
+              dispatchContext.triggerComment,
+            ),
+          )
       : await advanceWebhookEvent({
           database: input.database,
           event: domainEvent,
@@ -1323,11 +1332,26 @@ function buildDispatchContext(
   fallbackPolicySummary: string,
 ):
   | {
+      readonly kind: "dispatch";
       readonly lifecycleInput: RunIssueLifecycleInput;
       readonly trigger: "label" | "mention";
       readonly triggerComment?: string;
     }
+  | {
+      readonly kind: "resume";
+      readonly lifecycleInput: RunIssueLifecycleInput;
+      readonly runId: string;
+    }
   | undefined {
+  if (isCheckDomainEvent(event)) {
+    return buildCheckResumeContext(
+      lifecycle,
+      event,
+      database,
+      github,
+      fallbackPolicySummary,
+    );
+  }
   if (!event.issue) {
     return undefined;
   }
@@ -1376,6 +1400,7 @@ function buildDispatchContext(
       return undefined;
     }
     return {
+      kind: "dispatch",
       lifecycleInput,
       trigger: "mention",
       triggerComment: commentBody,
@@ -1383,9 +1408,83 @@ function buildDispatchContext(
   }
 
   return {
+    kind: "dispatch",
     lifecycleInput,
     trigger: "label",
   };
+}
+
+function buildCheckResumeContext(
+  lifecycle: ServeLifecycleOptions,
+  event: DomainEvent,
+  database: StateDatabase,
+  github: GitHubApiAdapter,
+  fallbackPolicySummary: string,
+):
+  | {
+      readonly kind: "resume";
+      readonly lifecycleInput: RunIssueLifecycleInput;
+      readonly runId: string;
+    }
+  | undefined {
+  if (!event.pr) {
+    return undefined;
+  }
+  const snapshot = getWorkflowRunSnapshotByPullRequest(database, {
+    repoOwner: event.repo.owner,
+    repoName: event.repo.name,
+    prNumber: event.pr,
+  });
+  if (!snapshot || snapshot.run.state !== WorkflowState.CiWaiting) {
+    return undefined;
+  }
+
+  const repository = lifecycle.repositories.find(
+    (candidate) =>
+      candidate.repo.owner === event.repo.owner &&
+      candidate.repo.name === event.repo.name,
+  );
+  if (!repository) {
+    throw new Error(
+      `${ErrorCode.LocalConfigInvalid}: repository is not configured for ${event.repo.owner}/${event.repo.name}`,
+    );
+  }
+
+  const issue: RuntimeLifecycleIssue = {
+    number: snapshot.run.issue_number,
+    title: `Issue #${snapshot.run.issue_number}`,
+    body: "",
+    author: event.actor ?? "unknown",
+    labels: [],
+  };
+  const workspaceContext = buildWorkspaceContext(lifecycle.workspaceRoot, repository, issue);
+
+  return {
+    kind: "resume",
+    runId: snapshot.run.run_id,
+    lifecycleInput: {
+      database,
+      github,
+      artifactReader: lifecycle.artifactReader,
+      agents: lifecycle.agents,
+      event: { ...event, issue: snapshot.run.issue_number },
+      repo: repository.repo,
+      issue,
+      workspace: workspaceContext.workspace,
+      workspaceRoot: workspaceContext.workspaceRoot,
+      sourceRepoPath: workspaceContext.sourceRepoPath,
+      policy: repository.policy,
+      policySummary: `${fallbackPolicySummary}: ${repository.policyPath}`,
+    },
+  };
+}
+
+function isCheckDomainEvent(event: DomainEvent): boolean {
+  return (
+    event.event_type === DomainEventType.ChecksSucceeded ||
+    event.event_type === DomainEventType.ChecksFailed ||
+    event.event_type === DomainEventType.ChecksPending
+  );
 }
 
 function buildIssueContext(

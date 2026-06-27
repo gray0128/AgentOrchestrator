@@ -29,7 +29,7 @@ export type MockedEndToEndSmokeResult = {
   readonly issue: number;
   readonly pr: number;
   readonly headSha: string;
-  readonly mergeSha: string;
+  readonly mergeSha?: string;
   readonly snapshot: WorkflowRunSnapshot;
 };
 

@@ -298,39 +298,89 @@ test("runtime lifecycle maps planning state conflict to WORKFLOW_STATE_CONFLICT"
   );
 });
 
-test("runtime lifecycle maps failed checks to CHECKS_FAILED", async () => {
+test("runtime lifecycle repairs failed current-head checks through the fix loop", async () => {
+  const implementationResult = {
+    schema: "agent-orchestrator.implementation-result.v1" as const,
+    role: AgentRole.Implementer,
+    run_id: runId,
+    issue: 123,
+    branch: "agent/issue-123-low-risk-docs-update",
+    changed_files: ["docs/example.md"],
+    summary: "Fixed failed CI.",
+    test_summary: ["npm run check"],
+    risk: "low" as const,
+    pr_body_fields: {
+      summary: "Fixed failed CI.",
+      tests: ["npm run check"],
+      risk: "low"
+    },
+    created_at: "2026-06-24T08:00:00.000Z"
+  };
+  const { database, github, input, resumeHeadSha } = lifecycleInput({
+    useGitHeadForResume: true,
+    agents: () => ({
+      ...lifecycleAgents(),
+      implementer: new SequenceFakeAgentAdapter({
+        role: AgentRole.Implementer,
+        seedWorkspace: (workspacePath) => seedWorkspaceFile(workspacePath, "docs/example.md", "ci fixed\n"),
+        results: [implementationResult]
+      }),
+      prReviewer: new FakeAgentAdapter({
+        role: AgentRole.PrReviewer,
+        result: {
+          schema: "agent-orchestrator.reviewer-verdict.v1",
+          role: AgentRole.PrReviewer,
+          run_id: runId,
+          issue: 123,
+          pr: 1,
+          head_sha: "fake-1",
+          verdict: "APPROVED",
+          risk: "low",
+          summary: "CI fix approved.",
+          blocking_findings: [],
+          required_tests: ["npm run check"],
+          created_at: "2026-06-24T08:00:00.000Z"
+        }
+      })
+    })
+  });
+  seedResumeRun(database, {
+    state: WorkflowState.CiWaiting,
+    headSha: resumeHeadSha,
+    prNumber: 1
+  });
+  github.checkSummaries.set(`octo/repo#1@${resumeHeadSha}`, {
+    responseRef: `checks:1:${resumeHeadSha}`,
+    headSha: resumeHeadSha,
+    checks: [{ name: "npm run check", conclusion: "failure" }]
+  });
+  github.checkSummaries.set("octo/repo#1@fake-1", {
+    responseRef: "checks:1:fake-1",
+    headSha: "fake-1",
+    checks: [{ name: "npm run check", conclusion: "success" }]
+  });
+
+  const result = await runIssueLifecycleFromStep(input, "ci_waiting", runId);
+
+  assert.equal(result.headSha, "fake-1");
+  assert.equal(result.mergeSha, "merge-1");
+  assert.equal(result.snapshot.run.fix_round, 1);
+  assert.equal(result.snapshot.run.state, WorkflowState.IssueClosed);
+});
+
+test("runtime lifecycle keeps pending checks in ci_waiting without merging", async () => {
   const { database, github, input } = lifecycleInput();
   seedResumeRun(database, {
     state: WorkflowState.CiWaiting,
     headSha: "fake-head",
     prNumber: 1
   });
-  github.checkSummaries.set("octo/repo#1@fake-head", {
-    responseRef: "checks:1:fake-head",
-    headSha: "fake-head",
-    checks: [{ name: "npm run check", conclusion: "failure" }]
-  });
 
-  await assertLifecycleError(
-    () => runIssueLifecycleFromStep(input, "ci_waiting", runId),
-    ErrorCode.ChecksFailed,
-    /failed: npm run check/
-  );
-});
+  const result = await runIssueLifecycleFromStep(input, "ci_waiting", runId);
 
-test("runtime lifecycle maps pending checks to CHECKS_PENDING", async () => {
-  const { database, input } = lifecycleInput();
-  seedResumeRun(database, {
-    state: WorkflowState.CiWaiting,
-    headSha: "fake-head",
-    prNumber: 1
-  });
-
-  await assertLifecycleError(
-    () => runIssueLifecycleFromStep(input, "ci_waiting", runId),
-    ErrorCode.ChecksPending,
-    /pending: npm run check/
-  );
+  assert.equal(result.mergeSha, undefined);
+  assert.equal(result.snapshot.run.state, WorkflowState.CiWaiting);
+  assert.equal(github.merges.length, 0);
 });
 
 test("runtime lifecycle maps merge gate rejection to MERGE_GATE_BLOCKED", async () => {
@@ -502,6 +552,58 @@ test("runtime lifecycle maps exhausted fix rounds to RETRY_EXHAUSTED", async () 
 
   const snapshot = getWorkflowRunSnapshot(database, { runId });
   assert.equal(snapshot?.run.state, WorkflowState.Failed);
+});
+
+test("runtime lifecycle maps exhausted CI fix rounds to RETRY_EXHAUSTED", async () => {
+  const { database, github, input } = lifecycleInput({
+    policyOverride: {
+      ...policy,
+      review: { ...policy.review, max_fix_rounds: 0 }
+    }
+  });
+  seedResumeRun(database, {
+    state: WorkflowState.CiWaiting,
+    headSha: "fake-head",
+    prNumber: 1
+  });
+  github.checkSummaries.set("octo/repo#1@fake-head", {
+    responseRef: "checks:1:fake-head",
+    headSha: "fake-head",
+    checks: [{ name: "npm run check", conclusion: "failure" }]
+  });
+
+  await assertLifecycleError(
+    () => runIssueLifecycleFromStep(input, "ci_waiting", runId),
+    ErrorCode.RetryExhausted,
+    /fix rounds are exhausted/
+  );
+
+  const snapshot = getWorkflowRunSnapshot(database, { runId });
+  assert.equal(snapshot?.run.state, WorkflowState.Failed);
+});
+
+test("runtime lifecycle ignores stale-head check resume events", async () => {
+  const { database, github, input } = lifecycleInput();
+  seedResumeRun(database, {
+    state: WorkflowState.CiWaiting,
+    headSha: "fake-head",
+    prNumber: 1
+  });
+  const staleInput = {
+    ...input,
+    event: {
+      ...input.event,
+      event_type: DomainEventType.ChecksSucceeded,
+      pr: 1,
+      head_sha: "stale-head"
+    }
+  };
+
+  const result = await runIssueLifecycleFromStep(staleInput, "ci_waiting", runId);
+
+  assert.equal(result.mergeSha, undefined);
+  assert.equal(result.snapshot.run.state, WorkflowState.CiWaiting);
+  assert.equal(github.merges.length, 0);
 });
 
 test("runtime lifecycle maps blocked PR review to MERGE_GATE_BLOCKED", async () => {

@@ -56,9 +56,31 @@ Rules:
 - Every write method requires an idempotency key.
 - Every write method returns a GitHub reference suitable for `idempotent_actions.response_ref`.
 - Merge requires current PR head `sha`.
+- `readCheckSummary` returns evidence for the requested PR head and must not synthesize success for missing required checks.
 - The real adapter must obtain installation tokens from the GitHub App token provider.
 - The fake adapter is test-only and must not be used by live `serve` or non-dry-run reconciliation paths.
 - Adapter error mapping must use the registered GitHub error codes before surfacing failures to the state machine.
+
+## CI Check Gate
+
+Input:
+
+- Bound PR number and current `head_sha`.
+- Required check names from repo policy.
+- Latest GitHub check run / commit status evidence.
+
+Output:
+
+- `checks.succeeded` when every required check has a current-head successful conclusion.
+- `checks.pending` when any required check is pending or missing.
+- `checks.failed` when any required check has a current-head failed, cancelled, or timed-out conclusion.
+
+Rules:
+
+- Pending or missing checks leave the run in `ci_waiting` and do not call merge.
+- Failed current-head checks enter the same `fixing` loop used for PR review changes.
+- Check evidence from a stale `head_sha` is ignored for state advancement.
+- A later check webhook or explicit resume may continue from `ci_waiting` after re-reading current GitHub evidence.
 
 ## GitHub App Token Provider
 
