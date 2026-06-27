@@ -7,9 +7,11 @@ import {
   parseAgentMarkers,
   renderPlanComment,
   renderPlanReviewComment,
+  renderPrReviewComment,
   validateAgentMarker
 } from "../src/index.ts";
-import type { PlanResult, ReviewerVerdict } from "../src/index.ts";
+import type { FixResult, PlanResult, ReviewerVerdict } from "../src/index.ts";
+import { renderFixComment } from "../src/orchestrator/plan-comments.ts";
 
 test("plan comment includes a valid planner marker that can be found during reconciliation", () => {
   const comment = renderPlanComment(planResult());
@@ -54,6 +56,56 @@ test("plan review comment includes a valid review marker that can be found durin
       head_sha: undefined
     }
   ]);
+});
+
+test("fix comment includes a valid implementer marker with FIX_READY verdict", () => {
+  const comment = renderFixComment(fixResult());
+  const marker = findAgentMarker(
+    comment,
+    (candidate) =>
+      candidate.role === "implementer" &&
+      candidate.issue === 123 &&
+      candidate.run_id === "run_fix" &&
+      candidate.verdict === "FIX_READY"
+  );
+
+  assert.match(comment, /## Fix Round 1/);
+  assert.match(comment, /## Changed Files/);
+  assert.deepEqual(marker, {
+    schema: "agent-orchestrator:v1",
+    role: "implementer",
+    issue: 123,
+    run_id: "run_fix",
+    verdict: "FIX_READY",
+    pr: 42,
+    head_sha: "sha_fix_1"
+  });
+});
+
+test("pr review comment matches artifact template sections and marker", () => {
+  const comment = renderPrReviewComment(prReviewerVerdict(), 42);
+  const marker = findAgentMarker(
+    comment,
+    (candidate) =>
+      candidate.role === "pr_reviewer" &&
+      candidate.issue === 123 &&
+      candidate.run_id === "run_pr_review" &&
+      candidate.verdict === "REQUEST_CHANGES"
+  );
+
+  assert.match(comment, /## Agent PR Review/);
+  assert.match(comment, /Verdict: REQUEST_CHANGES/);
+  assert.match(comment, /## Blocking Findings/);
+  assert.match(comment, /\[high\] Missing regression test/);
+  assert.deepEqual(marker, {
+    schema: "agent-orchestrator:v1",
+    role: "pr_reviewer",
+    issue: 123,
+    run_id: "run_pr_review",
+    verdict: "REQUEST_CHANGES",
+    pr: 42,
+    head_sha: "sha_pr_1"
+  });
 });
 
 test("artifact rendering redacts secret-looking values and validates markers", () => {
@@ -111,6 +163,41 @@ function reviewerVerdict(): ReviewerVerdict {
     risk: "low",
     summary: "Plan is narrow and testable.",
     blocking_findings: [],
+    required_tests: ["npm run check"],
+    created_at: "2026-06-24T00:00:00.000Z"
+  };
+}
+
+function fixResult(): FixResult {
+  return {
+    schema: "agent-orchestrator.fix-result.v1",
+    role: AgentRole.Implementer,
+    run_id: "run_fix",
+    issue: 123,
+    pr: 42,
+    fix_round: 1,
+    branch: "ao/issue-123",
+    new_head_sha: "sha_fix_1",
+    changed_files: ["src/example.ts"],
+    summary: "Address review feedback.",
+    test_summary: ["npm run check"],
+    risk: "low",
+    created_at: "2026-06-24T00:00:00.000Z"
+  };
+}
+
+function prReviewerVerdict(): ReviewerVerdict {
+  return {
+    schema: "agent-orchestrator.reviewer-verdict.v1",
+    role: AgentRole.PrReviewer,
+    run_id: "run_pr_review",
+    issue: 123,
+    pr: 42,
+    head_sha: "sha_pr_1",
+    verdict: "REQUEST_CHANGES",
+    risk: "medium",
+    summary: "Please add a regression test.",
+    blocking_findings: [{ severity: "high", message: "Missing regression test" }],
     required_tests: ["npm run check"],
     created_at: "2026-06-24T00:00:00.000Z"
   };
