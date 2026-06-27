@@ -29,6 +29,9 @@ import { renderPullRequestBody } from "./pr-body.ts";
 import { advanceWebhookEvent, createIssueRunId } from "./webhook-runtime.ts";
 import type { AdvanceWebhookEventResult } from "./webhook-runtime.ts";
 import { buildBlockedHandling } from "./workflow-control.ts";
+import type { GitHubArtifactReader } from "../reconciliation/github-artifacts.ts";
+import { loadResumeContext } from "../reconciliation/resume-context.ts";
+import type { ResumeArtifactRequirement, ResumeContext } from "../reconciliation/resume-context.ts";
 import {
   collectWorkspaceDiffEvidence,
   prepareImplementerWorkspace,
@@ -67,6 +70,7 @@ export type RuntimeLifecycleWorkspace = {
 export type RunIssueLifecycleInput = {
   readonly database: StateDatabase;
   readonly github: GitHubApiAdapter;
+  readonly artifactReader?: GitHubArtifactReader;
   readonly agents: RuntimeLifecycleAgents;
   readonly event: DomainEvent;
   readonly repo: RuntimeLifecycleRepo;
@@ -554,6 +558,106 @@ function baseEnvelope(
   };
 }
 
+async function resolveResumeContext(
+  input: RunIssueLifecycleInput,
+  context: {
+    readonly runId: string;
+    readonly pr: number;
+    readonly headSha: string;
+    readonly requireCurrentHeadPrReview: boolean;
+    readonly now: Date;
+  }
+): Promise<ResumeContext> {
+  if (!input.artifactReader) {
+    throw new OrchestratorError(
+      ErrorCode.WorkflowArtifactMissing,
+      "Resume requires an artifact reader to rebuild plan, implementation, and review evidence"
+    );
+  }
+
+  const loaded = await loadResumeContext(input.artifactReader, input.repo, {
+    runId: context.runId,
+    issue: input.issue.number,
+    pr: context.pr,
+    headSha: context.headSha,
+    requiredTests: input.policy.checks.required,
+    requireCurrentHeadPrReview: context.requireCurrentHeadPrReview,
+    now: context.now
+  });
+  if (!loaded.ok) {
+    await blockRunForMissingResumeArtifacts(input, context.runId, context.pr, context.headSha, loaded.missing, context.now);
+  }
+  return loaded.context;
+}
+
+async function blockRunForMissingResumeArtifacts(
+  input: RunIssueLifecycleInput,
+  runId: string,
+  pr: number,
+  headSha: string,
+  missing: readonly ResumeArtifactRequirement[],
+  now: Date
+): Promise<never> {
+  const explanation = `Resume is missing required GitHub artifacts: ${missing.join(", ")}`;
+  const blocked = buildBlockedHandling({
+    currentLabels: input.issue.labels,
+    runId,
+    issue: input.issue.number,
+    pr,
+    headSha,
+    errorCode: ErrorCode.WorkflowArtifactMissing,
+    explanation,
+    requiredAction: "Restore the missing planner, plan review, implementation, or current-head PR review artifacts before resuming."
+  });
+  const snapshot = getWorkflowRunSnapshot(input.database, { runId });
+  if (snapshot) {
+    transition(
+      input.database,
+      runId,
+      snapshot.run.state,
+      WorkflowState.Blocked,
+      headSha,
+      WorkflowEvent.PolicyBlock,
+      now
+    );
+  }
+  const blockedCommentResult = await input.github.createOrUpdateIssueComment({
+    repo: input.event.repo,
+    issue: input.issue.number,
+    body: blocked.comment,
+    idempotencyKey: `${runId}:resume:block-comment`,
+    requestHash: createRequestHash({ runId, comment: blocked.comment })
+  });
+  recordCompletedAction(
+    input.database,
+    runId,
+    "create_issue_comment",
+    "issue",
+    String(input.issue.number),
+    blockedCommentResult.responseRef,
+    { runId, blockedComment: blocked.comment },
+    now
+  );
+  const labelsResult = await input.github.setIssueLabels({
+    repo: input.event.repo,
+    issue: input.issue.number,
+    labels: [...blocked.labels],
+    idempotencyKey: `${runId}:resume:block-labels`,
+    requestHash: createRequestHash({ runId, labels: blocked.labels })
+  });
+  recordCompletedAction(
+    input.database,
+    runId,
+    "set_issue_labels",
+    "issue",
+    String(input.issue.number),
+    labelsResult.responseRef,
+    { runId, labels: blocked.labels },
+    now
+  );
+  throw new OrchestratorError(ErrorCode.WorkflowArtifactMissing, explanation);
+}
+
 async function blockRunForPathPolicy(
   input: RunIssueLifecycleInput,
   runId: string,
@@ -711,35 +815,13 @@ export async function runIssueLifecycleFromStep(
     );
   }
 
-  const stubPlanReview: ReviewerVerdict = {
-    schema: "agent-orchestrator.reviewer-verdict.v1",
-    role: AgentRole.PlanReviewer,
-    run_id: runId,
-    issue: input.issue.number,
-    verdict: "APPROVED",
-    risk: "low",
-    summary: "Resume path assumes prior plan review approval.",
-    blocking_findings: [],
-    required_tests: input.policy.checks.required,
-    created_at: now.toISOString()
-  };
-  const stubImplementation: ImplementationResult = {
-    schema: "agent-orchestrator.implementation-result.v1",
-    role: AgentRole.Implementer,
-    run_id: runId,
-    issue: input.issue.number,
-    branch: input.workspace.branch,
-    changed_files: [],
-    summary: "Resume path uses existing PR head.",
-    test_summary: input.policy.checks.required,
-    risk: "low",
-    pr_body_fields: {
-      summary: "Resume path uses existing PR head.",
-      tests: input.policy.checks.required,
-      risk: "low"
-    },
-    created_at: now.toISOString()
-  };
+  const resumeContext = await resolveResumeContext(input, {
+    runId,
+    pr,
+    headSha,
+    requireCurrentHeadPrReview: startStep === "ci_waiting" || startStep === "merge_ready",
+    now
+  });
 
   if (startStep === "pr_reviewing" || startStep === "fixing" || startStep === "implementing") {
     const requiredPrApprovals = input.policy.review.required_pr_approvals ?? (input.policy.review.require_pr_review ? 1 : 0);
@@ -752,16 +834,43 @@ export async function runIssueLifecycleFromStep(
       now
     });
     safeTransition(input.database, runId, snapshot.run.state, WorkflowState.CiWaiting, headSha, WorkflowEvent.AgentPrReviewApproved, now);
-    return finishCiMergeAndCloseout(input, runId, pr, headSha, stubPlanReview, prReviews, stubImplementation, now);
+    return finishCiMergeAndCloseout(
+      input,
+      runId,
+      pr,
+      headSha,
+      resumeContext.planReview,
+      prReviews,
+      resumeContext.implementation,
+      now
+    );
   }
 
   if (startStep === "ci_waiting") {
     safeTransition(input.database, runId, snapshot.run.state, WorkflowState.CiWaiting, headSha, "checks.pending", now);
-    return finishCiMergeAndCloseout(input, runId, pr, headSha, stubPlanReview, [], stubImplementation, now);
+    return finishCiMergeAndCloseout(
+      input,
+      runId,
+      pr,
+      headSha,
+      resumeContext.planReview,
+      resumeContext.prReviews,
+      resumeContext.implementation,
+      now
+    );
   }
 
   if (startStep === "merge_ready") {
-    return finishMergeAndCloseout(input, runId, pr, headSha, stubPlanReview, [], stubImplementation, now);
+    return finishMergeAndCloseout(
+      input,
+      runId,
+      pr,
+      headSha,
+      resumeContext.planReview,
+      resumeContext.prReviews,
+      resumeContext.implementation,
+      now
+    );
   }
 
   throw new OrchestratorError(ErrorCode.LocalQueryInvalid, `Unsupported resume step: ${startStep}`);

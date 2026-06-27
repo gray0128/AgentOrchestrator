@@ -231,6 +231,12 @@ export {
   reconcileFromGitHubArtifacts,
 } from "./reconciliation/github-artifacts.ts";
 export { repairStateFromArtifacts } from "./reconciliation/state-repair.ts";
+export {
+  buildResumeContextFromArtifacts,
+  loadResumeContext,
+  readGitHubResumeArtifacts
+} from "./reconciliation/resume-context.ts";
+export { fakeGitHubArtifactReader } from "./github/fake-github-artifact-reader.ts";
 export type {
   ReconciliationDryRunInput,
   ReconciliationDryRunReport,
@@ -256,6 +262,14 @@ export type {
   RepairStateInput,
   RepairStateResult,
 } from "./reconciliation/state-repair.ts";
+export type {
+  BuildResumeContextInput,
+  ResumeArtifactBundle,
+  ResumeArtifactRequirement,
+  ResumeContext,
+  ResumeContextResult
+} from "./reconciliation/resume-context.ts";
+export type { FakeGitHubArtifactState } from "./github/fake-github-artifact-reader.ts";
 export {
   acquireLease,
   casUpdateRunState,
