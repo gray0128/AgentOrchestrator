@@ -34,6 +34,25 @@ jobs:
 
       - run: npm run check
 
+  coverage:
+    name: npm run coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+
+      - name: Configure git for workspace fixture tests
+        run: git config --global init.defaultBranch main
+
+      - run: npm ci
+
+      - run: npm run coverage
+
   smoke-e2e:
     name: npm run smoke:e2e
     runs-on: ubuntu-latest
