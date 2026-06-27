@@ -186,6 +186,47 @@ test("REST adapter reads required checks from check runs and commit statuses", a
   );
 });
 
+test("REST adapter readPullRequestContext preserves approvals after follow-up comments", async () => {
+  const fetch = new FetchRecorder([
+    response(200, {
+      number: 12,
+      html_url: "https://github.test/pr/12",
+      head: { sha: "head-sha" },
+      mergeable: true,
+      mergeable_state: "clean"
+    }),
+    response(200, {
+      labels: [{ name: "agent:autopilot" }]
+    }),
+    response(200, [
+      {
+        user: { login: "alice" },
+        state: "APPROVED",
+        commit_id: "head-sha"
+      },
+      {
+        user: { login: "alice" },
+        state: "COMMENTED",
+        commit_id: "head-sha"
+      }
+    ]),
+    response(200, { check_runs: [{ name: "npm run check", conclusion: "success" }] }),
+    response(200, { statuses: [] })
+  ]);
+  const github = adapter(fetch);
+
+  const context = await github.readPullRequestContext({
+    repo: repo(),
+    pr: 12,
+    issue: 7,
+    requiredChecks: ["npm run check"]
+  });
+
+  assert.equal(context.approvedReviewCount, 1);
+  assert.equal(context.headSha, "head-sha");
+  assert.deepEqual(context.labels, ["agent:autopilot"]);
+});
+
 test("REST adapter merges, deletes branch, closes issue, and maps auth failures", async () => {
   const fetch = new FetchRecorder([
     response(200, { sha: "merge-sha" }),

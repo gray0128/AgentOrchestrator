@@ -416,7 +416,7 @@ function countApprovedReviewsAtHead(reviews: readonly unknown[], headSha: string
     }
     const user = isRecord(review.user) && typeof review.user.login === "string" ? review.user.login : null;
     const state = typeof review.state === "string" ? review.state : null;
-    if (!user || !state) {
+    if (!user || !state || !isApprovalAlteringReviewState(state)) {
       continue;
     }
     latestByUser.set(user, {
@@ -432,4 +432,8 @@ function countApprovedReviewsAtHead(reviews: readonly unknown[], headSha: string
     }
   }
   return count;
+}
+
+function isApprovalAlteringReviewState(state: string): boolean {
+  return state === "APPROVED" || state === "CHANGES_REQUESTED" || state === "DISMISSED";
 }
