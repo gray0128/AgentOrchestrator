@@ -9,6 +9,8 @@ import {
 } from "../contracts/validation.ts";
 import { ErrorCode } from "../errors.ts";
 import { sanitizeMarkdown } from "../security/redaction.ts";
+import { resolveAgentEnv } from "./agent-env.ts";
+import type { AgentEnvConfig } from "./agent-env.ts";
 import { AgentRole } from "./adapter.ts";
 import type {
   AgentAdapter,
@@ -24,6 +26,7 @@ export type ProcessAgentAdapterInput<Role extends AgentRoleValue> = {
   readonly command: string;
   readonly args?: readonly string[];
   readonly env?: Record<string, string | undefined>;
+  readonly agentEnv?: AgentEnvConfig;
   readonly timeoutMs?: number;
 };
 
@@ -35,6 +38,7 @@ export class ProcessAgentAdapter<Role extends AgentRoleValue> implements AgentAd
   readonly #command: string;
   readonly #args: readonly string[];
   readonly #env: Record<string, string | undefined>;
+  readonly #agentEnv: AgentEnvConfig | undefined;
   readonly #timeoutMs: number;
 
   constructor(input: ProcessAgentAdapterInput<Role>) {
@@ -42,6 +46,7 @@ export class ProcessAgentAdapter<Role extends AgentRoleValue> implements AgentAd
     this.#command = input.command;
     this.#args = input.args ?? [];
     this.#env = input.env ?? process.env;
+    this.#agentEnv = input.agentEnv;
     this.#timeoutMs = input.timeoutMs ?? defaultTimeoutMs;
   }
 
@@ -51,7 +56,7 @@ export class ProcessAgentAdapter<Role extends AgentRoleValue> implements AgentAd
       command: this.#command,
       args: this.#args,
       cwd: workspacePath,
-      env: filterAgentEnv(this.#env),
+      env: resolveAgentEnv(this.#env, this.#agentEnv),
       stdin: JSON.stringify({ envelope, prompt }),
       timeoutMs: this.#timeoutMs
     });
@@ -126,17 +131,6 @@ function unwrapAgentOutput(parsed: unknown): {
     agent: typeof meta.agent === "string" ? meta.agent : undefined,
     model: typeof meta.model === "string" ? meta.model : undefined
   };
-}
-
-export function filterAgentEnv(env: Record<string, string | undefined>): Record<string, string> {
-  const filtered: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value === undefined || isSecretEnvKey(key)) {
-      continue;
-    }
-    filtered[key] = value;
-  }
-  return filtered;
 }
 
 function validateAgentResult<Role extends AgentRoleValue>(
@@ -241,10 +235,6 @@ function runProcess(input: {
 function appendBounded(current: string, chunk: Buffer): string {
   const next = `${current}${chunk.toString("utf8")}`;
   return next.length > maxOutputBytes ? next.slice(0, maxOutputBytes) : next;
-}
-
-function isSecretEnvKey(key: string): boolean {
-  return /(^|_)(GITHUB|TOKEN|SECRET|PRIVATE|PRIVATE_KEY|WEBHOOK|INSTALLATION_ID)(_|$)/i.test(key);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

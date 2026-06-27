@@ -237,6 +237,8 @@ ao init-config \
 - `agents.*.command` / `agents.*.args`：实际执行的命令和参数。
 - `agents.*.mode`：`read_only` 只读角色，`write_worktree` 可写工作区角色。
 - `agents.*.network`：agent 网络策略标记，支持 `deny`、`allow`、`restricted`。
+- `agent_env.mode`：传给 agent 子进程的环境变量策略。默认 `minimal`，只传递最小运行时 key；`legacy_blacklist` 为迁移兼容模式，沿用旧的 secret 名称黑名单过滤。
+- `agent_env.allowlist`：在 `minimal` 模式下，从宿主环境额外复制到 agent 的环境变量名列表。不会传递值到 `doctor` 输出或 task envelope。
 - `merge_agent`：当前为内置确定性合并 gate，不是外部 LLM 命令。
 
 本机配置的 schema 在：
@@ -560,6 +562,10 @@ tools/coding-agent-adapter.mjs --provider claude_code
 ```
 
 需要多 agent 优先级时，可在本机配置中添加 `agent_routing`。普通角色会选择第一个可执行候选；PR review 会根据 `review.required_pr_approvals` 从默认 profile 中取多个可执行 reviewer。
+
+默认情况下，agent 子进程不会继承完整宿主环境。Orchestrator 只传递最小运行时变量（如 `PATH`、`HOME`、`TMPDIR` 等）以及 `agent_env.allowlist` 中显式列出的 key。GitHub App 凭据、webhook secret、NPM/Docker/AWS token 等不会进入 agent 进程。若你从旧版本迁移且 agent 依赖额外环境变量，请把它们加入 `agent_env.allowlist`；仅在过渡期可使用 `agent_env.mode = "legacy_blacklist"`。
+
+`ao doctor` 会输出 `agent_env` 检查项，显示模式和将传递的 env key 列表，不显示任何值。
 
 ## 验证
 

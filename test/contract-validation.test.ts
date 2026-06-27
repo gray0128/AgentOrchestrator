@@ -229,6 +229,30 @@ test("local config fixture validates and rejects malformed agents", () => {
   assert.ok(invalid.errors.some((error) => error.includes("agents.planner.command")));
 });
 
+test("local config validates agent_env allowlist and rejects secret-bearing keys", () => {
+  const config = {
+    ...localConfig(),
+    agent_env: {
+      mode: "minimal",
+      allowlist: ["OPENAI_API_KEY", "CODEX_HOME"],
+    },
+  };
+
+  assert.deepEqual(validateLocalConfig(config), { ok: true, value: config });
+
+  const invalid = validateLocalConfig({
+    ...config,
+    agent_env: {
+      allowlist: ["GITHUB_TOKEN"],
+    },
+  });
+
+  assert.equal(invalid.ok, false);
+  assert.ok(
+    invalid.errors.some((error) => error.includes("agent_env.allowlist must not include secret-bearing key")),
+  );
+});
+
 test("local config supports routing catalog profiles and rejects unknown candidates", () => {
   const config = {
     ...localConfig(),

@@ -8,6 +8,22 @@
 - Agent prompts must not include installation tokens, private keys, webhook secrets, or local config secrets.
 - Local config may reference secret-bearing environment variable names, but must not store app private keys, webhook secrets, installation tokens, or personal access tokens directly.
 
+## Agent Environment
+
+Process agent adapters must not inherit the full host environment.
+
+| Mode | Behavior |
+| --- | --- |
+| `minimal` (default) | Pass only a fixed minimal runtime key set plus optional `agent_env.allowlist` keys that are present in the host environment. |
+| `legacy_blacklist` | Migration-only mode. Pass all host environment variables except keys matching the legacy secret-name filter. |
+
+Rules:
+
+- Default mode is `minimal`. Arbitrary host environment variables must not reach agent processes unless explicitly listed in `agent_env.allowlist`.
+- `agent_env.allowlist` names additional environment variable keys to copy from the host when defined. It must not include GitHub App credential refs, webhook secret env names, or other orchestrator-owned secrets.
+- `doctor` reports the resolved agent env key list and mode. It must never print environment variable values.
+- Agent task envelopes and prompts must not include resolved environment variable values.
+
 ## GitHub App Permissions
 
 MVP required permissions:

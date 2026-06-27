@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { AgentRole, ErrorCode, ProcessAgentAdapter, filterAgentEnv } from "../src/index.ts";
+import {
+  AgentRole,
+  ErrorCode,
+  ProcessAgentAdapter,
+  resolveAgentEnv,
+} from "../src/index.ts";
 import type { TaskEnvelope } from "../src/index.ts";
 
 test("process agent adapter sends envelope over stdin and validates planner JSON output", async () => {
@@ -115,21 +120,62 @@ test("process agent adapter rejects invalid JSON and schema-invalid output", asy
   assert.equal(schemaResult.errorCode, ErrorCode.AgentSchemaInvalid);
 });
 
-test("agent environment filter removes GitHub and secret-bearing variables", () => {
+test("agent environment allowlist passes only minimal keys by default", () => {
   assert.deepEqual(
-    filterAgentEnv({
+    resolveAgentEnv({
       PATH: "/bin",
+      HOME: "/home/user",
       GITHUB_TOKEN: "token",
-      AGENT_SECRET: "secret",
-      APP_PRIVATE_KEY: "key",
-      WEBHOOK_SECRET: "webhook",
+      NPM_TOKEN: "npm",
+      AWS_SECRET_ACCESS_KEY: "aws",
+      DOCKER_AUTH_CONFIG: "docker",
+      CUSTOM_SECRET: "secret",
+      OPENAI_API_KEY: "openai",
       NORMAL_VALUE: "ok",
-      EMPTY: undefined
+      EMPTY: undefined,
     }),
     {
       PATH: "/bin",
-      NORMAL_VALUE: "ok"
-    }
+      HOME: "/home/user",
+    },
+  );
+});
+
+test("agent environment allowlist includes configured extra keys", () => {
+  assert.deepEqual(
+    resolveAgentEnv(
+      {
+        PATH: "/bin",
+        OPENAI_API_KEY: "openai",
+        GITHUB_TOKEN: "token",
+      },
+      { allowlist: ["OPENAI_API_KEY"] },
+    ),
+    {
+      PATH: "/bin",
+      OPENAI_API_KEY: "openai",
+    },
+  );
+});
+
+test("legacy blacklist mode preserves prior secret filtering behavior", () => {
+  assert.deepEqual(
+    resolveAgentEnv(
+      {
+        PATH: "/bin",
+        GITHUB_TOKEN: "token",
+        AGENT_SECRET: "secret",
+        APP_PRIVATE_KEY: "key",
+        WEBHOOK_SECRET: "webhook",
+        NORMAL_VALUE: "ok",
+        EMPTY: undefined,
+      },
+      { mode: "legacy_blacklist" },
+    ),
+    {
+      PATH: "/bin",
+      NORMAL_VALUE: "ok",
+    },
   );
 });
 

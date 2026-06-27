@@ -8,9 +8,14 @@ export { ErrorCode, OrchestratorError } from "./errors.ts";
 export { AgentRole, isAgentRole } from "./agents/adapter.ts";
 export { FakeAgentAdapter } from "./agents/fake-agent-adapter.ts";
 export {
-  ProcessAgentAdapter,
+  DEFAULT_AGENT_ENV_KEYS,
   filterAgentEnv,
-} from "./agents/process-agent-adapter.ts";
+  listAgentEnvKeys,
+  resolveAgentEnv,
+  resolveAgentEnvMode,
+} from "./agents/agent-env.ts";
+export type { AgentEnvConfig } from "./agents/agent-env.ts";
+export { ProcessAgentAdapter } from "./agents/process-agent-adapter.ts";
 export {
   decideInvalidAgentOutput,
   validateImplementationResult,

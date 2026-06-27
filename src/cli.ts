@@ -15,6 +15,7 @@ import { isSea } from "node:sea";
 import { fileURLToPath } from "node:url";
 
 import { AgentRole } from "./agents/adapter.ts";
+import { listAgentEnvKeys, resolveAgentEnvMode } from "./agents/agent-env.ts";
 import { ProcessAgentAdapter } from "./agents/process-agent-adapter.ts";
 import {
   RoutingAgentAdapter,
@@ -255,6 +256,7 @@ async function runDoctor(args: readonly string[], io: CliIo): Promise<number> {
     checks.push(doctorWebhookSecret());
     checks.push(...doctorRepositories(config));
     checks.push(...doctorAgents(config));
+    checks.push(doctorAgentEnv(config));
   }
 
   const ok = checks.every((check) => check.status === "pass");
@@ -795,6 +797,16 @@ function doctorAgents(config: LocalConfig): readonly DoctorCheck[] {
   }));
 }
 
+function doctorAgentEnv(config: LocalConfig): DoctorCheck {
+  const mode = resolveAgentEnvMode(config.agent_env);
+  const keys = listAgentEnvKeys(config.agent_env);
+  return {
+    name: "agent_env",
+    status: "pass",
+    message: `mode=${mode} keys=${keys.join(",")}`,
+  };
+}
+
 function parseRepoFlag(value: string): {
   readonly owner: string;
   readonly name: string;
@@ -881,14 +893,20 @@ function buildProcessAgents(config: LocalConfig): RuntimeLifecycleAgentsWithTria
     implementer: buildRoleAgent(config, AgentRole.Implementer),
     prReviewer: buildRoleAgent(config, AgentRole.PrReviewer),
     prReviewers: buildRoleAgentPool(config, AgentRole.PrReviewer),
-    triage: config.agents.triage ? buildProcessAgent(AgentRole.Triage, config.agents.triage) : undefined,
+    triage: config.agents.triage
+      ? buildProcessAgent(AgentRole.Triage, config.agents.triage, config.agent_env)
+      : undefined,
   };
 }
 
 function buildRoleAgent<
   Role extends (typeof AgentRole)[keyof typeof AgentRole],
 >(config: LocalConfig, role: Role) {
-  const fallback = buildProcessAgent(role, config.agents[roleConfigKey(role)]);
+  const fallback = buildProcessAgent(
+    role,
+    config.agents[roleConfigKey(role)],
+    config.agent_env,
+  );
   if (!config.agent_routing) {
     return fallback;
   }
@@ -899,7 +917,7 @@ function buildRoleAgent<
         .filter(
           (agentConfig) => agentConfig && agentCommandAvailable(agentConfig),
         )
-        .map((agentConfig) => buildProcessAgent(role, agentConfig));
+        .map((agentConfig) => buildProcessAgent(role, agentConfig, config.agent_env));
       return {
         name,
         labelsAny: profile.labels_any,
@@ -918,7 +936,11 @@ function buildRoleAgent<
 function buildRoleAgentPool<
   Role extends (typeof AgentRole)[keyof typeof AgentRole],
 >(config: LocalConfig, role: Role) {
-  const fallback = buildProcessAgent(role, config.agents[roleConfigKey(role)]);
+  const fallback = buildProcessAgent(
+    role,
+    config.agents[roleConfigKey(role)],
+    config.agent_env,
+  );
   if (!config.agent_routing?.default_profile) {
     return [fallback];
   }
@@ -930,17 +952,18 @@ function buildRoleAgentPool<
       (agentConfig): agentConfig is AgentConfig =>
         Boolean(agentConfig) && agentCommandAvailable(agentConfig),
     )
-    .map((agentConfig) => buildProcessAgent(role, agentConfig));
+    .map((agentConfig) => buildProcessAgent(role, agentConfig, config.agent_env));
   return candidates.length > 0 ? candidates : [fallback];
 }
 
 function buildProcessAgent<
   Role extends (typeof AgentRole)[keyof typeof AgentRole],
->(role: Role, config: AgentConfig) {
+>(role: Role, agentConfig: AgentConfig, agentEnv?: LocalConfig["agent_env"]) {
   return new ProcessAgentAdapter({
     role,
-    command: config.command,
-    args: config.args,
+    command: agentConfig.command,
+    args: agentConfig.args,
+    agentEnv,
   });
 }
 
