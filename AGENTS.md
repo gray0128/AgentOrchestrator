@@ -77,6 +77,15 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - For web prototype or UI/UX verification, prefer Chrome-based verification when available.
 - At task closeout, run the required verification and record the result in the GitHub issue/PR. Update design, API, contract, README, or operations docs only when the PR changes those surfaces.
 
+## Issue and PR Workflow
+
+- Issue handling starts from live GitHub state: read the issue, linked milestone, open PRs, and relevant comments before planning or coding.
+- For implementation issues, keep the plan to one verifiable slice, update contracts first when the change affects them, run the documented checks, and open or update a PR with the verification result.
+- PR review must follow the `pr-review` skill: bind the review to the current PR head SHA, read live PR comments/reviews/checks, inspect the diff and affected callers, treat historical approvals/checks on older SHAs as stale, and publish an evidence-bound review unless the user explicitly asks for chat-only output.
+- Do not merge a PR unless the user explicitly authorizes the merge or the orchestrator policy-controlled workflow requires it.
+- Before merging, refresh the PR state and exact head SHA, confirm required checks and review requirements are satisfied on that SHA, verify unresolved blocking comments are addressed, and re-review if new commits landed after the latest review.
+- Merge through GitHub-native tooling/API, then verify the target branch state, linked issue status, and any required closeout comment. Delete the source branch only when it is safe and expected.
+
 ## Document Priority
 
 1. Product and architecture plan: `github-native-agent-orchestrator-自动处理-issue-方案.md`.
