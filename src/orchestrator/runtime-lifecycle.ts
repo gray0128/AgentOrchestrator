@@ -8,7 +8,8 @@ import type {
   TaskEnvelope,
   TriageNextStep
 } from "../agents/adapter.ts";
-import type { RepoPolicy } from "../contracts/validation.ts";
+import type { FixResult, RepoPolicy } from "../contracts/validation.ts";
+import { validateFixResult } from "../contracts/validation.ts";
 import { ErrorCode, OrchestratorError } from "../errors.ts";
 import type { ErrorCode as ErrorCodeValue } from "../errors.ts";
 import type { GitHubApiAdapter } from "../github/api.ts";
@@ -22,7 +23,7 @@ import type { DomainEvent } from "../webhooks/domain-event.ts";
 import { attributionFromMetadata } from "./agent-attribution.ts";
 import { renderFinalSummary } from "./closeout.ts";
 import { evaluateMergeGate } from "./merge-gate.ts";
-import { renderPlanComment, renderPlanReviewComment, renderPrReviewComment } from "./plan-comments.ts";
+import { renderFixComment, renderPlanComment, renderPlanReviewComment, renderPrReviewComment } from "./plan-comments.ts";
 import { aggregateChecks, decideFixLoop, mapPrReviewVerdictToEvent } from "./pr-gate.ts";
 import type { CheckAggregationResult } from "./pr-gate.ts";
 import { renderPullRequestBody } from "./pr-body.ts";
@@ -34,6 +35,7 @@ import { loadResumeContext } from "../reconciliation/resume-context.ts";
 import type { ResumeArtifactRequirement, ResumeContext } from "../reconciliation/resume-context.ts";
 import {
   collectWorkspaceDiffEvidence,
+  prepareFixWorkspace,
   prepareImplementerWorkspace,
   readDiffFileContents,
   validateControlledWorkspace
@@ -183,7 +185,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
   });
   const pathPolicyBlock = resolvePathPolicyBlock(pathPolicyDecision);
   if (pathPolicyBlock) {
-    await blockRunForPathPolicy(input, runId, pathPolicyBlock, now);
+    await blockRunForPathPolicy(input, runId, pathPolicyBlock, WorkflowState.Implementing, null, now);
   }
   const implementation = {
     ...implementationProposal,
@@ -261,44 +263,56 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
   transition(input.database, runId, WorkflowState.PrOpened, WorkflowState.PrReviewing, commit.headSha, WorkflowEvent.PullRequestBound, now);
 
   const requiredPrApprovals = input.policy.review.required_pr_approvals ?? (input.policy.review.require_pr_review ? 1 : 0);
-  const prReviews = await runRequiredPrReviews({
+  const prReviewOutcome = await runRequiredPrReviews({
     input,
     runId,
     pr,
     headSha: commit.headSha,
+    branch: implementation.branch,
+    implementation,
+    planCommentUrl: planCommentResult.responseRef,
     requiredPrApprovals,
     now
   });
-  transition(input.database, runId, WorkflowState.PrReviewing, WorkflowState.CiWaiting, commit.headSha, WorkflowEvent.AgentPrReviewApproved, now);
+  const reviewedHeadSha = prReviewOutcome.headSha;
+  transition(
+    input.database,
+    runId,
+    WorkflowState.PrReviewing,
+    WorkflowState.CiWaiting,
+    reviewedHeadSha,
+    WorkflowEvent.AgentPrReviewApproved,
+    now
+  );
 
   const checks = await input.github.readCheckSummary({
     repo: input.event.repo,
     pr,
-    headSha: commit.headSha,
+    headSha: reviewedHeadSha,
     requiredChecks: input.policy.checks.required
   });
   const checkAggregation = aggregateChecks({
-    currentHeadSha: commit.headSha,
+    currentHeadSha: reviewedHeadSha,
     requiredChecks: input.policy.checks.required,
     skippedCountsAsSuccess: input.policy.checks.skipped_counts_as_success,
     neutralCountsAsSuccess: input.policy.checks.neutral_counts_as_success,
-    checks: checks.checks.map((check) => ({ name: check.name, headSha: commit.headSha, conclusion: check.conclusion }))
+    checks: checks.checks.map((check) => ({ name: check.name, headSha: reviewedHeadSha, conclusion: check.conclusion }))
   });
   assertChecksSucceeded(checkAggregation);
-  transition(input.database, runId, WorkflowState.CiWaiting, WorkflowState.MergeReady, commit.headSha, WorkflowEvent.ChecksSucceeded, now);
+  transition(input.database, runId, WorkflowState.CiWaiting, WorkflowState.MergeReady, reviewedHeadSha, WorkflowEvent.ChecksSucceeded, now);
 
   const mergeDecision = evaluateMergeGate({
     runId,
     issue: input.issue.number,
     pr,
-    currentHeadSha: commit.headSha,
+    currentHeadSha: reviewedHeadSha,
     labels: input.issue.labels,
     risk: implementation.risk,
     allowedRisks: input.policy.merge.auto_merge.allowed_risks,
     blockedLabels: input.policy.merge.auto_merge.blocked_labels,
     planReviewCurrent: planReviewRun.result.verdict === "APPROVED",
-    prReviewHeadSha: prReviews[0]?.head_sha,
-    approvedPrReviewCount: prReviews.length,
+    prReviewHeadSha: prReviewOutcome.reviews[0]?.head_sha,
+    approvedPrReviewCount: prReviewOutcome.reviews.length,
     requiredPrApprovals,
     checksSucceeded: true,
     githubMergeable: true,
@@ -309,12 +323,12 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
   const merge = await input.github.mergePullRequest({
     repo: input.event.repo,
     pr,
-    expectedHeadSha: commit.headSha,
+    expectedHeadSha: reviewedHeadSha,
     method: mergeDecision.merge_method,
     idempotencyKey: `${runId}:merge:pull-request`,
     requestHash: createRequestHash({ runId, mergeDecision })
   });
-  transition(input.database, runId, WorkflowState.MergeReady, WorkflowState.Merged, commit.headSha, WorkflowEvent.MergeCompleted, now);
+  transition(input.database, runId, WorkflowState.MergeReady, WorkflowState.Merged, reviewedHeadSha, WorkflowEvent.MergeCompleted, now);
 
   await input.github.deleteBranch({
     repo: input.event.repo,
@@ -327,7 +341,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     runId,
     issue: input.issue.number,
     pr,
-    headSha: commit.headSha,
+    headSha: reviewedHeadSha,
     mergeSha: merge.mergeSha,
     tests: input.policy.checks.required.join(", "),
     risk: implementation.risk
@@ -345,29 +359,37 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     idempotencyKey: `${runId}:merge:close-issue`,
     requestHash: createRequestHash({ runId, issue: input.issue.number })
   });
-  transition(input.database, runId, WorkflowState.Merged, WorkflowState.IssueClosed, commit.headSha, WorkflowEvent.IssueCloseoutCompleted, now);
+  transition(input.database, runId, WorkflowState.Merged, WorkflowState.IssueClosed, reviewedHeadSha, WorkflowEvent.IssueCloseoutCompleted, now);
 
   const snapshot = requireWorkflowRunSnapshot(input.database, runId, "closeout");
   return {
     runId,
     issue: input.issue.number,
     pr,
-    headSha: commit.headSha,
+    headSha: reviewedHeadSha,
     mergeSha: merge.mergeSha,
     snapshot
   };
 }
+
+type PrReviewOutcome = {
+  readonly reviews: readonly ReviewerVerdict[];
+  readonly headSha: string;
+};
 
 async function runRequiredPrReviews(input: {
   readonly input: RunIssueLifecycleInput;
   readonly runId: string;
   readonly pr: number;
   readonly headSha: string;
+  readonly branch: string;
+  readonly implementation: ImplementationResult;
+  readonly planCommentUrl: string;
   readonly requiredPrApprovals: number;
   readonly now: Date;
-}): Promise<readonly ReviewerVerdict[]> {
+}): Promise<PrReviewOutcome> {
   if (input.requiredPrApprovals === 0) {
-    return [];
+    return { reviews: [], headSha: input.headSha };
   }
   const reviewers = input.input.agents.prReviewers ?? [input.input.agents.prReviewer];
   const requiredReviewers = reviewers.slice(0, input.requiredPrApprovals);
@@ -377,78 +399,316 @@ async function runRequiredPrReviews(input: {
       `Not enough independent PR reviewers configured: required ${input.requiredPrApprovals}, available ${requiredReviewers.length}`
     );
   }
-  const approved: ReviewerVerdict[] = [];
-  for (const [index, reviewer] of requiredReviewers.entries()) {
-    const prReviewRun = await runAgent(
-      reviewer,
-      prReviewerEnvelope(input.input, input.runId, input.pr, input.headSha, input.now),
-      `Review the PR independently as reviewer ${index + 1}.`,
-      input.input.sourceRepoPath
-    );
-    const prReview = prReviewRun.result;
-    const prReviewEvent = mapPrReviewVerdictToEvent(prReview, input.headSha);
-    if (prReviewEvent === WorkflowEvent.AgentPrReviewChangesRequested) {
-      const snapshot = getWorkflowRunSnapshot(input.input.database, { runId: input.runId });
-      const fixDecision = decideFixLoop({
-        currentState: WorkflowState.PrReviewing,
-        currentFixRound: snapshot?.run.fix_round ?? 0,
-        maxFixRounds: input.input.policy.review.max_fix_rounds,
-        trigger: WorkflowEvent.AgentPrReviewChangesRequested
-      });
-      if (fixDecision.nextState === WorkflowState.Failed) {
+
+  let currentHeadSha = input.headSha;
+  while (true) {
+    const approved: ReviewerVerdict[] = [];
+    let restarted = false;
+    for (const [index, reviewer] of requiredReviewers.entries()) {
+      const prReviewRun = await runAgent(
+        reviewer,
+        prReviewerEnvelope(input.input, input.runId, input.pr, currentHeadSha, input.branch, input.now),
+        `Review the PR independently as reviewer ${index + 1}.`,
+        input.input.sourceRepoPath
+      );
+      const prReview = prReviewRun.result;
+      const prReviewEvent = mapPrReviewVerdictToEvent(prReview, currentHeadSha);
+      if (prReviewEvent === WorkflowEvent.AgentPrReviewChangesRequested) {
+        await input.input.github.submitPullRequestReview({
+          repo: input.input.event.repo,
+          pr: input.pr,
+          headSha: currentHeadSha,
+          event: "REQUEST_CHANGES",
+          body: renderPrReviewComment(
+            prReview,
+            input.pr,
+            attributionFromMetadata(prReviewRun.metadata, AgentRole.PrReviewer)
+          ),
+          idempotencyKey: `${input.runId}:pr-reviewer:${index + 1}:request-changes:${currentHeadSha}`,
+          requestHash: createRequestHash({ runId: input.runId, reviewer: index + 1, prReview, currentHeadSha })
+        });
+        const snapshot = getWorkflowRunSnapshot(input.input.database, { runId: input.runId });
+        const fixDecision = decideFixLoop({
+          currentState: WorkflowState.PrReviewing,
+          currentFixRound: snapshot?.run.fix_round ?? 0,
+          maxFixRounds: input.input.policy.review.max_fix_rounds,
+          trigger: WorkflowEvent.AgentPrReviewChangesRequested
+        });
+        if (fixDecision.nextState === WorkflowState.Failed) {
+          transitionToFailed(
+            input.input.database,
+            input.runId,
+            snapshot?.run.state ?? WorkflowState.PrReviewing,
+            currentHeadSha,
+            input.now
+          );
+          throw new OrchestratorError(
+            ErrorCode.RetryExhausted,
+            "PR review requested changes and fix rounds are exhausted"
+          );
+        }
+        transitionWithFixRound(
+          input.input.database,
+          input.runId,
+          WorkflowState.PrReviewing,
+          WorkflowState.Fixing,
+          currentHeadSha,
+          currentHeadSha,
+          fixDecision.nextFixRound,
+          WorkflowEvent.AgentPrReviewChangesRequested,
+          input.now
+        );
+        const headBeforeFix = currentHeadSha;
+        currentHeadSha = await runImplementerFix({
+          input: input.input,
+          runId: input.runId,
+          pr: input.pr,
+          branch: input.branch,
+          headSha: headBeforeFix,
+          fixRound: fixDecision.nextFixRound,
+          implementation: input.implementation,
+          planCommentUrl: input.planCommentUrl,
+          now: input.now
+        });
+        transitionWithFixRound(
+          input.input.database,
+          input.runId,
+          WorkflowState.Fixing,
+          WorkflowState.PrReviewing,
+          headBeforeFix,
+          currentHeadSha,
+          fixDecision.nextFixRound,
+          WorkflowEvent.AgentFixReady,
+          input.now
+        );
+        restarted = true;
+        break;
+      }
+      if (prReviewEvent === WorkflowEvent.AgentPrReviewBlocked) {
+        transition(
+          input.input.database,
+          input.runId,
+          WorkflowState.PrReviewing,
+          WorkflowState.Blocked,
+          currentHeadSha,
+          WorkflowEvent.AgentPrReviewBlocked,
+          input.now
+        );
+        throw new OrchestratorError(ErrorCode.MergeGateBlocked, `PR reviewer ${index + 1} blocked the run`);
+      }
+      if (prReviewEvent !== WorkflowEvent.AgentPrReviewApproved) {
         throw new OrchestratorError(
-          ErrorCode.RetryExhausted,
-          "PR review requested changes and fix rounds are exhausted"
+          ErrorCode.StaleHeadSha,
+          `PR reviewer ${index + 1} did not approve current head ${currentHeadSha}`
         );
       }
-      transition(
-        input.input.database,
-        input.runId,
-        WorkflowState.PrReviewing,
-        WorkflowState.Fixing,
-        input.headSha,
-        WorkflowEvent.AgentPrReviewChangesRequested,
-        input.now
-      );
-      throw new OrchestratorError(
-        ErrorCode.ReviewChangesRequested,
-        `PR reviewer ${index + 1} requested changes; run moved to fixing`
-      );
+      await input.input.github.submitPullRequestReview({
+        repo: input.input.event.repo,
+        pr: input.pr,
+        headSha: currentHeadSha,
+        event: "COMMENT",
+        body: renderPrReviewComment(
+          prReview,
+          input.pr,
+          attributionFromMetadata(prReviewRun.metadata, AgentRole.PrReviewer)
+        ),
+        idempotencyKey: `${input.runId}:pr-reviewer:${index + 1}:comment:${currentHeadSha}`,
+        requestHash: createRequestHash({ runId: input.runId, reviewer: index + 1, prReview, currentHeadSha })
+      });
+      approved.push(prReview);
     }
-    if (prReviewEvent === WorkflowEvent.AgentPrReviewBlocked) {
-      transition(
-        input.input.database,
-        input.runId,
-        WorkflowState.PrReviewing,
-        WorkflowState.Blocked,
-        input.headSha,
-        WorkflowEvent.AgentPrReviewBlocked,
-        input.now
-      );
-      throw new OrchestratorError(ErrorCode.MergeGateBlocked, `PR reviewer ${index + 1} blocked the run`);
+    if (!restarted) {
+      return { reviews: approved, headSha: currentHeadSha };
     }
-    if (prReviewEvent !== WorkflowEvent.AgentPrReviewApproved) {
-      throw new OrchestratorError(
-        ErrorCode.StaleHeadSha,
-        `PR reviewer ${index + 1} did not approve current head ${input.headSha}`
-      );
-    }
-    await input.input.github.submitPullRequestReview({
-      repo: input.input.event.repo,
-      pr: input.pr,
-      headSha: input.headSha,
-      event: "COMMENT",
-      body: renderPrReviewComment(
-        prReview,
-        input.pr,
-        attributionFromMetadata(prReviewRun.metadata, AgentRole.PrReviewer)
-      ),
-      idempotencyKey: `${input.runId}:pr-reviewer:${index + 1}:comment`,
-      requestHash: createRequestHash({ runId: input.runId, reviewer: index + 1, prReview })
-    });
-    approved.push(prReview);
   }
-  return approved;
+}
+
+async function runImplementerFix(input: {
+  readonly input: RunIssueLifecycleInput;
+  readonly runId: string;
+  readonly pr: number;
+  readonly branch: string;
+  readonly headSha: string;
+  readonly fixRound: number;
+  readonly implementation: ImplementationResult;
+  readonly planCommentUrl: string;
+  readonly now: Date;
+}): Promise<string> {
+  const preparedWorkspace = prepareFixWorkspace({
+    workspaceRoot: input.input.workspaceRoot,
+    repoName: input.input.repo.name,
+    issue: input.input.issue.number,
+    issueTitle: input.input.issue.title,
+    sourceRepoPath: input.input.sourceRepoPath,
+    branch: input.branch,
+    headSha: input.headSha
+  });
+  const fixRun = await runAgent(
+    input.input.agents.implementer,
+    fixerEnvelope(input.input, input.runId, input.pr, preparedWorkspace, input.now),
+    `Apply fix round ${input.fixRound} for review feedback.`,
+    preparedWorkspace.path
+  );
+  const fixProposal = fixRun.result;
+  const diffEvidence = collectWorkspaceDiffEvidence(preparedWorkspace.path, fixProposal.changed_files);
+  const pathPolicyDecision = evaluatePathPolicy({
+    changedFiles: diffEvidence.changedFiles,
+    allow: input.input.policy.paths.allow,
+    deny: input.input.policy.paths.deny,
+    highRisk: input.input.policy.paths.high_risk
+  });
+  const pathPolicyBlock = resolvePathPolicyBlock(pathPolicyDecision);
+  if (pathPolicyBlock) {
+    await blockRunForPathPolicy(
+      input.input,
+      input.runId,
+      pathPolicyBlock,
+      WorkflowState.Fixing,
+      input.headSha,
+      input.now
+    );
+  }
+  const commit = await input.input.github.commitChanges({
+    repo: input.input.event.repo,
+    branch: preparedWorkspace.branch,
+    expectedHeadSha: input.headSha,
+    message: `Fix issue #${input.input.issue.number} (round ${input.fixRound})`,
+    files: readDiffFileContents(input.input.workspaceRoot, preparedWorkspace.path, diffEvidence.changedFiles),
+    idempotencyKey: `${input.runId}:implementer:fix:${input.fixRound}:commit`,
+    requestHash: createRequestHash({ runId: input.runId, fixRound: input.fixRound, files: diffEvidence.changedFiles })
+  });
+  const fixResult = buildFixResult({
+    implementation: fixProposal,
+    runId: input.runId,
+    issue: input.input.issue.number,
+    pr: input.pr,
+    fixRound: input.fixRound,
+    branch: preparedWorkspace.branch,
+    baseHeadSha: input.headSha,
+    newHeadSha: commit.headSha,
+    now: input.now
+  });
+  const validatedFix = validateFixResult(fixResult);
+  if (!validatedFix.ok) {
+    throw new OrchestratorError(ErrorCode.AgentSchemaInvalid, validatedFix.errors.join("; "));
+  }
+  const fixAttribution = attributionFromMetadata(fixRun.metadata, AgentRole.Implementer);
+  const fixComment = renderFixComment(fixResult, fixAttribution);
+  const fixCommentResult = await input.input.github.createOrUpdateIssueComment({
+    repo: input.input.event.repo,
+    issue: input.input.issue.number,
+    body: fixComment,
+    idempotencyKey: `${input.runId}:implementer:fix:${input.fixRound}:comment`,
+    requestHash: createRequestHash({ runId: input.runId, fixComment })
+  });
+  recordCompletedAction(
+    input.input.database,
+    input.runId,
+    "create_issue_comment",
+    "issue",
+    String(input.input.issue.number),
+    fixCommentResult.responseRef,
+    { runId: input.runId, fixComment },
+    input.now
+  );
+  const updatedImplementation: ImplementationResult = {
+    ...input.implementation,
+    branch: preparedWorkspace.branch,
+    base_sha: input.headSha,
+    head_sha: commit.headSha,
+    changed_files: diffEvidence.changedFiles,
+    summary: fixProposal.summary,
+    test_summary: fixProposal.test_summary,
+    risk: fixProposal.risk,
+    pr_body_fields: fixProposal.pr_body_fields
+  };
+  const prBody = renderPullRequestBody(
+    {
+      implementation: updatedImplementation,
+      pr: input.pr,
+      planCommentUrl: input.planCommentUrl,
+      headSha: commit.headSha
+    },
+    fixAttribution
+  );
+  await input.input.github.createOrUpdatePullRequest({
+    repo: input.input.event.repo,
+    title: input.input.issue.title,
+    body: prBody,
+    headBranch: preparedWorkspace.branch,
+    baseBranch: input.input.repo.default_branch,
+    issue: input.input.issue.number,
+    idempotencyKey: `${input.runId}:implementer:fix:${input.fixRound}:update-pr`,
+    requestHash: createRequestHash({ runId: input.runId, prBody })
+  });
+  return commit.headSha;
+}
+
+function buildFixResult(input: {
+  readonly implementation: ImplementationResult;
+  readonly runId: string;
+  readonly issue: number;
+  readonly pr: number;
+  readonly fixRound: number;
+  readonly branch: string;
+  readonly baseHeadSha: string;
+  readonly newHeadSha: string;
+  readonly now: Date;
+}): FixResult {
+  return {
+    schema: "agent-orchestrator.fix-result.v1",
+    role: AgentRole.Implementer,
+    run_id: input.runId,
+    issue: input.issue,
+    pr: input.pr,
+    fix_round: input.fixRound,
+    branch: input.branch,
+    base_head_sha: input.baseHeadSha,
+    new_head_sha: input.newHeadSha,
+    changed_files: [...input.implementation.changed_files],
+    summary: input.implementation.summary,
+    test_summary: [...input.implementation.test_summary],
+    risk: input.implementation.risk,
+    created_at: input.now.toISOString()
+  };
+}
+
+function fixerEnvelope(
+  input: RunIssueLifecycleInput,
+  runId: string,
+  pr: number,
+  preparedWorkspace: { readonly path: string; readonly branch: string; readonly baseSha: string },
+  now: Date
+): TaskEnvelope {
+  return {
+    ...baseEnvelope(
+      input,
+      runId,
+      AgentRole.Implementer,
+      { commit: true, changed_files: true, test_summary: true },
+      now,
+      {
+        path: preparedWorkspace.path,
+        branch: preparedWorkspace.branch,
+        base_sha: preparedWorkspace.baseSha,
+        head_sha: preparedWorkspace.baseSha
+      }
+    ),
+    pr: {
+      number: pr,
+      title: input.issue.title,
+      body: "PR body",
+      head_sha: preparedWorkspace.baseSha,
+      base_branch: input.repo.default_branch,
+      head_branch: preparedWorkspace.branch
+    },
+    dispatch: {
+      current_state: WorkflowState.Fixing,
+      trigger: "mention",
+      pr_number: pr,
+      head_sha: preparedWorkspace.baseSha
+    }
+  };
 }
 
 type AgentRunOutput<Role extends AgentRole> = {
@@ -516,16 +776,26 @@ function implementerEnvelope(
   };
 }
 
-function prReviewerEnvelope(input: RunIssueLifecycleInput, runId: string, pr: number, headSha: string, now: Date): TaskEnvelope {
+function prReviewerEnvelope(
+  input: RunIssueLifecycleInput,
+  runId: string,
+  pr: number,
+  headSha: string,
+  branch: string,
+  now: Date
+): TaskEnvelope {
   return {
-    ...baseEnvelope(input, runId, AgentRole.PrReviewer, { review: true }, now),
+    ...baseEnvelope(input, runId, AgentRole.PrReviewer, { review: true }, now, {
+      path: input.workspace.path,
+      branch
+    }),
     pr: {
       number: pr,
       title: input.issue.title,
       body: "PR body",
       head_sha: headSha,
       base_branch: input.repo.default_branch,
-      head_branch: input.workspace.branch
+      head_branch: branch
     }
   };
 }
@@ -662,6 +932,8 @@ async function blockRunForPathPolicy(
   input: RunIssueLifecycleInput,
   runId: string,
   block: PathPolicyBlock,
+  currentState: string,
+  headSha: string | null,
   now: Date
 ): Promise<never> {
   const errorCode = block.errorCode as ErrorCodeValue;
@@ -676,9 +948,9 @@ async function blockRunForPathPolicy(
   transition(
     input.database,
     runId,
-    WorkflowState.Implementing,
+    currentState,
     WorkflowState.Blocked,
-    null,
+    headSha,
     WorkflowEvent.PolicyBlock,
     now
   );
@@ -744,6 +1016,66 @@ function transition(
       ErrorCode.WorkflowStateConflict,
       `Lifecycle transition failed: ${expectedState} -> ${nextState}`
     );
+  }
+}
+
+function transitionWithFixRound(
+  database: StateDatabase,
+  runId: string,
+  expectedState: string,
+  nextState: string,
+  expectedHeadSha: string | null,
+  nextHeadSha: string | null,
+  nextFixRound: number,
+  eventType: string,
+  now: Date
+): void {
+  const updated = casUpdateRunState(database, {
+    runId,
+    expectedState,
+    expectedHeadSha,
+    nextState,
+    nextHeadSha,
+    nextFixRound,
+    idempotencyKey: `${runId}:transition:${eventType}:${nextState}:${nextFixRound}:${nextHeadSha ?? "none"}`,
+    eventType,
+    reason: "Fix loop progression.",
+    now
+  });
+  if (!updated) {
+    throw new OrchestratorError(
+      ErrorCode.WorkflowStateConflict,
+      `Fix loop transition failed: ${expectedState} -> ${nextState}`
+    );
+  }
+}
+
+function transitionToFailed(
+  database: StateDatabase,
+  runId: string,
+  expectedState: string,
+  headSha: string | null,
+  now: Date
+): void {
+  const updated = casUpdateRunState(database, {
+    runId,
+    expectedState,
+    expectedHeadSha: headSha,
+    nextState: WorkflowState.Failed,
+    nextHeadSha: headSha,
+    idempotencyKey: `${runId}:transition:${WorkflowEvent.RetryExhausted}:${WorkflowState.Failed}`,
+    eventType: WorkflowEvent.RetryExhausted,
+    reason: "Fix rounds exhausted.",
+    now
+  });
+  if (!updated) {
+    const snapshot = getWorkflowRunSnapshot(database, { runId });
+    if (snapshot?.run.state !== WorkflowState.Failed) {
+      throw new OrchestratorError(
+        ErrorCode.WorkflowStateConflict,
+        `Failed transition could not be applied from ${expectedState}`
+      );
+    }
   }
 }
 
@@ -823,24 +1155,68 @@ export async function runIssueLifecycleFromStep(
     now
   });
 
-  if (startStep === "pr_reviewing" || startStep === "fixing" || startStep === "implementing") {
-    const requiredPrApprovals = input.policy.review.required_pr_approvals ?? (input.policy.review.require_pr_review ? 1 : 0);
-    const prReviews = await runRequiredPrReviews({
+  let resumeHeadSha = headSha;
+  if (startStep === "fixing") {
+    if (snapshot.run.fix_round < 1) {
+      throw new OrchestratorError(
+        ErrorCode.WorkflowStateConflict,
+        `Workflow run ${runId} is in fixing without an active fix round`
+      );
+    }
+    const headBeforeFix = headSha;
+    resumeHeadSha = await runImplementerFix({
       input,
       runId,
       pr,
-      headSha,
+      branch: resumeContext.implementation.branch,
+      headSha: headBeforeFix,
+      fixRound: snapshot.run.fix_round,
+      implementation: resumeContext.implementation,
+      planCommentUrl: `resume-plan-${runId}`,
+      now
+    });
+    transitionWithFixRound(
+      input.database,
+      runId,
+      WorkflowState.Fixing,
+      WorkflowState.PrReviewing,
+      headBeforeFix,
+      resumeHeadSha,
+      snapshot.run.fix_round,
+      WorkflowEvent.AgentFixReady,
+      now
+    );
+  }
+
+  if (startStep === "pr_reviewing" || startStep === "fixing" || startStep === "implementing") {
+    const requiredPrApprovals = input.policy.review.required_pr_approvals ?? (input.policy.review.require_pr_review ? 1 : 0);
+    const prReviewOutcome = await runRequiredPrReviews({
+      input,
+      runId,
+      pr,
+      headSha: resumeHeadSha,
+      branch: resumeContext.implementation.branch,
+      implementation: resumeContext.implementation,
+      planCommentUrl: `resume-plan-${runId}`,
       requiredPrApprovals,
       now
     });
-    safeTransition(input.database, runId, snapshot.run.state, WorkflowState.CiWaiting, headSha, WorkflowEvent.AgentPrReviewApproved, now);
+    safeTransition(
+      input.database,
+      runId,
+      snapshot.run.state === WorkflowState.Fixing ? WorkflowState.PrReviewing : snapshot.run.state,
+      WorkflowState.CiWaiting,
+      prReviewOutcome.headSha,
+      WorkflowEvent.AgentPrReviewApproved,
+      now
+    );
     return finishCiMergeAndCloseout(
       input,
       runId,
       pr,
-      headSha,
+      prReviewOutcome.headSha,
       resumeContext.planReview,
-      prReviews,
+      prReviewOutcome.reviews,
       resumeContext.implementation,
       now
     );

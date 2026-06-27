@@ -31,6 +31,7 @@ export type CasUpdateRunStateInput = {
   readonly expectedHeadSha: string | null;
   readonly nextState: string;
   readonly nextHeadSha: string | null;
+  readonly nextFixRound?: number;
   readonly idempotencyKey: string;
   readonly eventType: string;
   readonly reason: string;
@@ -485,6 +486,7 @@ export function acquireLease(database: StateDatabase, input: AcquireLeaseInput):
 export function casUpdateRunState(database: StateDatabase, input: CasUpdateRunStateInput): boolean {
   database.exec("BEGIN IMMEDIATE");
   try {
+    const fixRoundClause = input.nextFixRound === undefined ? "" : ", fix_round = ?";
     const result = database
       .prepare(
         `
@@ -492,7 +494,7 @@ export function casUpdateRunState(database: StateDatabase, input: CasUpdateRunSt
           SET state = ?,
               head_sha = ?,
               idempotency_key = ?,
-              updated_at = ?
+              updated_at = ?${fixRoundClause}
           WHERE run_id = ?
             AND state = ?
             AND (
@@ -506,6 +508,7 @@ export function casUpdateRunState(database: StateDatabase, input: CasUpdateRunSt
         input.nextHeadSha,
         input.idempotencyKey,
         input.now.toISOString(),
+        ...(input.nextFixRound === undefined ? [] : [input.nextFixRound]),
         input.runId,
         input.expectedState,
         input.expectedHeadSha,

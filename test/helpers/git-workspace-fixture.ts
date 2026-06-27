@@ -35,6 +35,7 @@ export function createGitWorkspaceFixture(input: {
   runGit(sourceRepoPath, ["config", "user.name", "Fixture"]);
   runGit(sourceRepoPath, ["add", "."]);
   runGit(sourceRepoPath, ["commit", "-m", "seed"]);
+  runGit(sourceRepoPath, ["branch", "-M", "main"]);
 
   const plan = createWorkspacePlan({
     workspaceRoot,
@@ -63,4 +64,12 @@ export function runGit(cwd: string, args: readonly string[]): void {
   if (result.status !== 0) {
     throw new Error(`git ${args.join(" ")} failed in ${cwd}: ${result.stderr || result.stdout}`);
   }
+}
+
+export function resolveGitRef(cwd: string, ref: string): string {
+  const result = spawnSync("git", ["-C", cwd, "rev-parse", ref], { encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(`git rev-parse ${ref} failed in ${cwd}: ${result.stderr || result.stdout}`);
+  }
+  return result.stdout.trim();
 }
