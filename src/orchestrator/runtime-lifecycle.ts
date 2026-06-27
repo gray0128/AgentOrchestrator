@@ -24,6 +24,7 @@ import {
 } from "../state/sqlite-store.ts";
 import type { StateDatabase, WorkflowRunSnapshot } from "../state/sqlite-store.ts";
 import { WorkflowEvent, WorkflowState } from "../state/state-machine.ts";
+import type { WorkflowState as WorkflowStateValue } from "../state/state-machine.ts";
 import type { DomainEvent } from "../webhooks/domain-event.ts";
 import { attributionFromMetadata } from "./agent-attribution.ts";
 import { renderFinalSummary } from "./closeout.ts";
@@ -42,6 +43,11 @@ import {
   replayMergePullRequest
 } from "./idempotent-github-write.ts";
 import { buildBlockedHandling } from "./workflow-control.ts";
+import {
+  createWorkflowLabelSyncContext,
+  syncWorkflowStateLabels,
+  type WorkflowLabelSyncContext
+} from "./state-label-sync.ts";
 import type { GitHubArtifactReader } from "../reconciliation/github-artifacts.ts";
 import { loadResumeContext } from "../reconciliation/resume-context.ts";
 import type { ResumeArtifactRequirement, ResumeContext } from "../reconciliation/resume-context.ts";
@@ -125,6 +131,16 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     throwPlanningStartError(accepted.reason);
   }
   const runId = accepted.runId;
+  const labelSync = createWorkflowLabelSyncContext({
+    database: input.database,
+    github: input.github,
+    eventRepo: input.event.repo,
+    issueNumber: input.issue.number,
+    issueLabels: input.issue.labels,
+    runId,
+    now
+  });
+  await syncWorkflowStateLabels(labelSync, WorkflowState.Planning, "start:planning");
 
   const planRun = await runAgent(input.agents.planner, plannerEnvelope(input, runId, now), "Create a low-risk plan.", input.sourceRepoPath);
   const planComment = renderPlanComment(planRun.result, attributionFromMetadata(planRun.metadata, AgentRole.Planner));
@@ -139,7 +155,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     runId,
     planComment
   }, now);
-  transition(input.database, runId, WorkflowState.Planning, WorkflowState.PlanReviewing, null, WorkflowEvent.AgentPlanSubmitted, now);
+  await transition(input.database, runId, WorkflowState.Planning, WorkflowState.PlanReviewing, null, WorkflowEvent.AgentPlanSubmitted, now, labelSync);
 
   const planReviewRun = await runAgent(
     input.agents.planReviewer,
@@ -162,7 +178,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     runId,
     planReviewComment
   }, now);
-  transition(input.database, runId, WorkflowState.PlanReviewing, WorkflowState.Implementing, null, WorkflowEvent.AgentPlanReviewApproved, now);
+  await transition(input.database, runId, WorkflowState.PlanReviewing, WorkflowState.Implementing, null, WorkflowEvent.AgentPlanReviewApproved, now, labelSync);
 
   validateControlledWorkspace({
     workspaceRoot: input.workspaceRoot,
@@ -352,7 +368,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     reason: "Implementation created branch, commit, and PR.",
     now
   });
-  transition(input.database, runId, WorkflowState.PrOpened, WorkflowState.PrReviewing, commit.headSha, WorkflowEvent.PullRequestBound, now);
+  await transition(input.database, runId, WorkflowState.PrOpened, WorkflowState.PrReviewing, commit.headSha, WorkflowEvent.PullRequestBound, now, labelSync);
 
   const requiredPrApprovals = input.policy.review.required_pr_approvals ?? (input.policy.review.require_pr_review ? 1 : 0);
   const prReviewOutcome = await runRequiredPrReviews({
@@ -364,17 +380,19 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     implementation,
     planCommentUrl: planCommentResult.responseRef,
     requiredPrApprovals,
+    labelSync,
     now
   });
   const reviewedHeadSha = prReviewOutcome.headSha;
-  transition(
+  await transition(
     input.database,
     runId,
     WorkflowState.PrReviewing,
     WorkflowState.CiWaiting,
     reviewedHeadSha,
     WorkflowEvent.AgentPrReviewApproved,
-    now
+    now,
+    labelSync
   );
 
   return finishCiMergeAndCloseout(
@@ -385,6 +403,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     planReviewRun.result,
     prReviewOutcome.reviews,
     implementation,
+    labelSync,
     now
   );
 }
@@ -403,6 +422,7 @@ async function runRequiredPrReviews(input: {
   readonly implementation: ImplementationResult;
   readonly planCommentUrl: string;
   readonly requiredPrApprovals: number;
+  readonly labelSync: WorkflowLabelSyncContext;
   readonly now: Date;
 }): Promise<PrReviewOutcome> {
   if (input.requiredPrApprovals === 0) {
@@ -472,19 +492,20 @@ async function runRequiredPrReviews(input: {
           trigger: WorkflowEvent.AgentPrReviewChangesRequested
         });
         if (fixDecision.nextState === WorkflowState.Failed) {
-          transitionToFailed(
+          await transitionToFailed(
             input.input.database,
             input.runId,
             snapshot?.run.state ?? WorkflowState.PrReviewing,
             currentHeadSha,
-            input.now
+            input.now,
+            input.labelSync
           );
           throw new OrchestratorError(
             ErrorCode.RetryExhausted,
             "PR review requested changes and fix rounds are exhausted"
           );
         }
-        transitionWithFixRound(
+        await transitionWithFixRound(
           input.input.database,
           input.runId,
           WorkflowState.PrReviewing,
@@ -493,7 +514,8 @@ async function runRequiredPrReviews(input: {
           currentHeadSha,
           fixDecision.nextFixRound,
           WorkflowEvent.AgentPrReviewChangesRequested,
-          input.now
+          input.now,
+          input.labelSync
         );
         const headBeforeFix = currentHeadSha;
         currentHeadSha = await runImplementerFix({
@@ -507,7 +529,7 @@ async function runRequiredPrReviews(input: {
           planCommentUrl: input.planCommentUrl,
           now: input.now
         });
-        transitionWithFixRound(
+        await transitionWithFixRound(
           input.input.database,
           input.runId,
           WorkflowState.Fixing,
@@ -516,20 +538,22 @@ async function runRequiredPrReviews(input: {
           currentHeadSha,
           fixDecision.nextFixRound,
           WorkflowEvent.AgentFixReady,
-          input.now
+          input.now,
+          input.labelSync
         );
         restarted = true;
         break;
       }
       if (prReviewEvent === WorkflowEvent.AgentPrReviewBlocked) {
-        transition(
+        await transition(
           input.input.database,
           input.runId,
           WorkflowState.PrReviewing,
           WorkflowState.Blocked,
           currentHeadSha,
           WorkflowEvent.AgentPrReviewBlocked,
-          input.now
+          input.now,
+          input.labelSync
         );
         throw new OrchestratorError(ErrorCode.MergeGateBlocked, `PR reviewer ${index + 1} blocked the run`);
       }
@@ -982,7 +1006,7 @@ async function blockRunForMissingResumeArtifacts(
   });
   const snapshot = getWorkflowRunSnapshot(input.database, { runId });
   if (snapshot) {
-    transition(
+    await transition(
       input.database,
       runId,
       snapshot.run.state,
@@ -1046,7 +1070,7 @@ async function blockRunForPathPolicy(
     explanation: block.explanation,
     requiredAction: block.requiredAction
   });
-  transition(
+  await transition(
     input.database,
     runId,
     currentState,
@@ -1092,15 +1116,16 @@ async function blockRunForPathPolicy(
   throw new OrchestratorError(errorCode, block.explanation);
 }
 
-function transition(
+async function transition(
   database: StateDatabase,
   runId: string,
   expectedState: string,
   nextState: string,
   headSha: string | null,
   eventType: string,
-  now: Date
-): void {
+  now: Date,
+  labelSync?: WorkflowLabelSyncContext
+): Promise<void> {
   const updated = casUpdateRunState(database, {
     runId,
     expectedState,
@@ -1118,9 +1143,12 @@ function transition(
       `Lifecycle transition failed: ${expectedState} -> ${nextState}`
     );
   }
+  if (labelSync) {
+    await syncWorkflowStateLabels(labelSync, nextState as WorkflowStateValue, `${eventType}:${nextState}`);
+  }
 }
 
-function transitionWithFixRound(
+async function transitionWithFixRound(
   database: StateDatabase,
   runId: string,
   expectedState: string,
@@ -1129,8 +1157,9 @@ function transitionWithFixRound(
   nextHeadSha: string | null,
   nextFixRound: number,
   eventType: string,
-  now: Date
-): void {
+  now: Date,
+  labelSync?: WorkflowLabelSyncContext
+): Promise<void> {
   const updated = casUpdateRunState(database, {
     runId,
     expectedState,
@@ -1149,15 +1178,23 @@ function transitionWithFixRound(
       `Fix loop transition failed: ${expectedState} -> ${nextState}`
     );
   }
+  if (labelSync) {
+    await syncWorkflowStateLabels(
+      labelSync,
+      nextState as WorkflowStateValue,
+      `${eventType}:${nextState}:${nextFixRound}`
+    );
+  }
 }
 
-function transitionToFailed(
+async function transitionToFailed(
   database: StateDatabase,
   runId: string,
   expectedState: string,
   headSha: string | null,
-  now: Date
-): void {
+  now: Date,
+  labelSync?: WorkflowLabelSyncContext
+): Promise<void> {
   const updated = casUpdateRunState(database, {
     runId,
     expectedState,
@@ -1177,6 +1214,9 @@ function transitionToFailed(
         `Failed transition could not be applied from ${expectedState}`
       );
     }
+  }
+  if (labelSync) {
+    await syncWorkflowStateLabels(labelSync, WorkflowState.Failed, `${WorkflowEvent.RetryExhausted}:${WorkflowState.Failed}`);
   }
 }
 
@@ -1257,6 +1297,15 @@ export async function runIssueLifecycleFromStep(
     requireCurrentHeadPrReview: startStep === "ci_waiting" || startStep === "merge_ready",
     now
   });
+  const labelSync = createWorkflowLabelSyncContext({
+    database: input.database,
+    github: input.github,
+    eventRepo: input.event.repo,
+    issueNumber: input.issue.number,
+    issueLabels: input.issue.labels,
+    runId,
+    now
+  });
 
   let resumeHeadSha = headSha;
   if (startStep === "fixing") {
@@ -1278,7 +1327,7 @@ export async function runIssueLifecycleFromStep(
       planCommentUrl: `resume-plan-${runId}`,
       now
     });
-    transitionWithFixRound(
+    await transitionWithFixRound(
       input.database,
       runId,
       WorkflowState.Fixing,
@@ -1287,7 +1336,8 @@ export async function runIssueLifecycleFromStep(
       resumeHeadSha,
       snapshot.run.fix_round,
       WorkflowEvent.AgentFixReady,
-      now
+      now,
+      labelSync
     );
   }
 
@@ -1302,16 +1352,18 @@ export async function runIssueLifecycleFromStep(
       implementation: resumeContext.implementation,
       planCommentUrl: `resume-plan-${runId}`,
       requiredPrApprovals,
+      labelSync,
       now
     });
-    safeTransition(
+    await safeTransition(
       input.database,
       runId,
       snapshot.run.state === WorkflowState.Fixing ? WorkflowState.PrReviewing : snapshot.run.state,
       WorkflowState.CiWaiting,
       prReviewOutcome.headSha,
       WorkflowEvent.AgentPrReviewApproved,
-      now
+      now,
+      labelSync
     );
     return finishCiMergeAndCloseout(
       input,
@@ -1321,6 +1373,7 @@ export async function runIssueLifecycleFromStep(
       resumeContext.planReview,
       prReviewOutcome.reviews,
       resumeContext.implementation,
+      labelSync,
       now
     );
   }
@@ -1329,7 +1382,7 @@ export async function runIssueLifecycleFromStep(
     if (input.event.head_sha && input.event.head_sha !== headSha) {
       return waitingForChecksResult(input, runId, pr, headSha);
     }
-    safeTransition(input.database, runId, snapshot.run.state, WorkflowState.CiWaiting, headSha, "checks.pending", now);
+    await safeTransition(input.database, runId, snapshot.run.state, WorkflowState.CiWaiting, headSha, "checks.pending", now, labelSync);
     return finishCiMergeAndCloseout(
       input,
       runId,
@@ -1338,6 +1391,7 @@ export async function runIssueLifecycleFromStep(
       resumeContext.planReview,
       resumeContext.prReviews,
       resumeContext.implementation,
+      labelSync,
       now
     );
   }
@@ -1351,6 +1405,7 @@ export async function runIssueLifecycleFromStep(
       resumeContext.planReview,
       resumeContext.prReviews,
       resumeContext.implementation,
+      labelSync,
       now
     );
   }
@@ -1358,15 +1413,16 @@ export async function runIssueLifecycleFromStep(
   throw new OrchestratorError(ErrorCode.LocalQueryInvalid, `Unsupported resume step: ${startStep}`);
 }
 
-function safeTransition(
+async function safeTransition(
   database: StateDatabase,
   runId: string,
   expectedState: string,
   nextState: string,
   headSha: string | null,
   eventType: string,
-  now: Date
-): void {
+  now: Date,
+  labelSync?: WorkflowLabelSyncContext
+): Promise<void> {
   const updated = casUpdateRunState(database, {
     runId,
     expectedState,
@@ -1387,6 +1443,9 @@ function safeTransition(
       );
     }
   }
+  if (labelSync) {
+    await syncWorkflowStateLabels(labelSync, nextState as WorkflowStateValue, `${eventType}:${nextState}`);
+  }
 }
 
 async function finishCiMergeAndCloseout(
@@ -1397,6 +1456,7 @@ async function finishCiMergeAndCloseout(
   planReview: ReviewerVerdict,
   prReviews: readonly ReviewerVerdict[],
   implementation: ImplementationResult,
+  labelSync: WorkflowLabelSyncContext,
   now: Date
 ): Promise<RunIssueLifecycleResult> {
   const checks = await input.github.readCheckSummary({
@@ -1434,10 +1494,10 @@ async function finishCiMergeAndCloseout(
       trigger: WorkflowEvent.ChecksFailed
     });
     if (fixDecision.nextState === WorkflowState.Failed) {
-      transitionToFailed(input.database, runId, snapshot?.run.state ?? WorkflowState.CiWaiting, headSha, now);
+      await transitionToFailed(input.database, runId, snapshot?.run.state ?? WorkflowState.CiWaiting, headSha, now, labelSync);
       throw new OrchestratorError(ErrorCode.RetryExhausted, formatCheckFailureMessage(checkAggregation, "CI checks failed and fix rounds are exhausted"));
     }
-    transitionWithFixRound(
+    await transitionWithFixRound(
       input.database,
       runId,
       snapshot?.run.state ?? WorkflowState.CiWaiting,
@@ -1446,7 +1506,8 @@ async function finishCiMergeAndCloseout(
       headSha,
       fixDecision.nextFixRound,
       WorkflowEvent.ChecksFailed,
-      now
+      now,
+      labelSync
     );
     const nextHeadSha = await runImplementerFix({
       input,
@@ -1459,7 +1520,7 @@ async function finishCiMergeAndCloseout(
       planCommentUrl: `ci-fix-${runId}`,
       now
     });
-    transitionWithFixRound(
+    await transitionWithFixRound(
       input.database,
       runId,
       WorkflowState.Fixing,
@@ -1468,7 +1529,8 @@ async function finishCiMergeAndCloseout(
       nextHeadSha,
       fixDecision.nextFixRound,
       WorkflowEvent.AgentFixReady,
-      now
+      now,
+      labelSync
     );
     const requiredPrApprovals = input.policy.review.required_pr_approvals ?? (input.policy.review.require_pr_review ? 1 : 0);
     const prReviewOutcome = await runRequiredPrReviews({
@@ -1480,30 +1542,33 @@ async function finishCiMergeAndCloseout(
       implementation,
       planCommentUrl: `ci-fix-${runId}`,
       requiredPrApprovals,
+      labelSync,
       now
     });
-    safeTransition(
+    await safeTransition(
       input.database,
       runId,
       WorkflowState.PrReviewing,
       WorkflowState.CiWaiting,
       prReviewOutcome.headSha,
       WorkflowEvent.AgentPrReviewApproved,
-      now
+      now,
+      labelSync
     );
-    return finishCiMergeAndCloseout(input, runId, pr, prReviewOutcome.headSha, planReview, prReviewOutcome.reviews, implementation, now);
+    return finishCiMergeAndCloseout(input, runId, pr, prReviewOutcome.headSha, planReview, prReviewOutcome.reviews, implementation, labelSync, now);
   }
   const beforeMerge = getWorkflowRunSnapshot(input.database, { runId });
-  safeTransition(
+  await safeTransition(
     input.database,
     runId,
     beforeMerge?.run.state ?? WorkflowState.CiWaiting,
     WorkflowState.MergeReady,
     headSha,
     WorkflowEvent.ChecksSucceeded,
-    now
+    now,
+    labelSync
   );
-  return finishMergeAndCloseout(input, runId, pr, headSha, planReview, prReviews, implementation, now);
+  return finishMergeAndCloseout(input, runId, pr, headSha, planReview, prReviews, implementation, labelSync, now);
 }
 
 function waitingForChecksResult(
@@ -1546,6 +1611,7 @@ async function finishMergeAndCloseout(
   planReview: ReviewerVerdict,
   prReviews: readonly ReviewerVerdict[],
   implementation: ImplementationResult,
+  labelSync: WorkflowLabelSyncContext,
   now: Date
 ): Promise<RunIssueLifecycleResult> {
   const requiredChecks = input.policy.checks.required;
@@ -1643,14 +1709,15 @@ async function finishMergeAndCloseout(
     }
   );
   const beforeMerged = getWorkflowRunSnapshot(input.database, { runId });
-  safeTransition(
+  await safeTransition(
     input.database,
     runId,
     beforeMerged?.run.state ?? WorkflowState.MergeReady,
     WorkflowState.Merged,
     headSha,
     WorkflowEvent.MergeCompleted,
-    now
+    now,
+    labelSync
   );
 
   const deleteBranchKey = `${runId}:merge:delete-branch`;
@@ -1742,7 +1809,7 @@ async function finishMergeAndCloseout(
       replay: replayGitHubWrite
     }
   );
-  transition(input.database, runId, WorkflowState.Merged, WorkflowState.IssueClosed, headSha, WorkflowEvent.IssueCloseoutCompleted, now);
+  await transition(input.database, runId, WorkflowState.Merged, WorkflowState.IssueClosed, headSha, WorkflowEvent.IssueCloseoutCompleted, now, labelSync);
 
   const resultSnapshot = requireWorkflowRunSnapshot(input.database, runId, "closeout");
   return {
