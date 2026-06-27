@@ -16,6 +16,7 @@ import type { StateDatabase, WorkflowRunSnapshot } from "../state/sqlite-store.t
 import { WorkflowState } from "../state/state-machine.ts";
 import { DomainEventType } from "../webhooks/domain-event.ts";
 import type { DomainEvent } from "../webhooks/domain-event.ts";
+import { createIdempotencyKey } from "./idempotency-key.ts";
 import { advanceWebhookEvent, createIssueRunId } from "./webhook-runtime.ts";
 import {
   collectDispatchUntrustedText,
@@ -94,11 +95,11 @@ export async function dispatchIssueWork(input: DispatchIssueWorkInput): Promise<
     repo: input.event.repo,
     issue: input.issue.number,
     body: triageComment,
-    idempotencyKey: `${runId}:triage:${input.trigger}:${triage.next_step}`,
+    idempotencyKey: createIdempotencyKey(runId, "triage", input.trigger, triage.next_step),
     requestHash: createRequestHash({ runId, triage })
   });
   recordIdempotentAction(input.database, {
-    idempotencyKey: `${runId}:triage:${input.trigger}:comment`,
+    idempotencyKey: createIdempotencyKey(runId, "triage", input.trigger, "comment"),
     runId,
     actionType: "create_issue_comment",
     targetType: "issue",
@@ -188,7 +189,7 @@ async function ensureRunExists(input: DispatchIssueWorkInput, now: Date): Promis
     repoName: input.event.repo.name,
     issueNumber: input.issue.number,
     state: WorkflowState.New,
-    idempotencyKey: `${runId}:dispatch:create`,
+    idempotencyKey: createIdempotencyKey(runId, "dispatch", "create"),
     now
   });
   return runId;

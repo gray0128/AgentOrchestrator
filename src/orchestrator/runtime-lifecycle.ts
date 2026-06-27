@@ -50,6 +50,7 @@ import {
   replayIssueCommentWrite,
   replayMergePullRequest
 } from "./idempotent-github-write.ts";
+import { createIdempotencyKey } from "./idempotency-key.ts";
 import { buildBlockedHandling } from "./workflow-control.ts";
 import {
   createWorkflowLabelSyncContext,
@@ -178,17 +179,18 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     now
   );
   const planComment = renderPlanComment(planRun.result, attributionFromMetadata(planRun.metadata, AgentRole.Planner));
+  const planCommentKey = createIdempotencyKey(runId, "planner", "plan-comment");
   const planCommentResult = await input.github.createOrUpdateIssueComment({
     repo: input.event.repo,
     issue: input.issue.number,
     body: planComment,
-    idempotencyKey: `${runId}:planner:plan-comment`,
+    idempotencyKey: planCommentKey,
     requestHash: createRequestHash({ runId, planComment })
   });
   recordCompletedAction(input.database, runId, "create_issue_comment", "issue", String(input.issue.number), planCommentResult.responseRef, {
     runId,
     planComment
-  }, now);
+  }, now, planCommentKey);
   await transition(input.database, runId, WorkflowState.Planning, WorkflowState.PlanReviewing, null, WorkflowEvent.AgentPlanSubmitted, now, labelSync);
 
   const planReviewRun = await runAgentWithInjectionGate(
@@ -206,17 +208,18 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     planReviewRun.result,
     attributionFromMetadata(planReviewRun.metadata, AgentRole.PlanReviewer)
   );
+  const planReviewCommentKey = createIdempotencyKey(runId, "plan-reviewer", "review-comment");
   const planReviewResult = await input.github.createOrUpdateIssueComment({
     repo: input.event.repo,
     issue: input.issue.number,
     body: planReviewComment,
-    idempotencyKey: `${runId}:plan-reviewer:review-comment`,
+    idempotencyKey: planReviewCommentKey,
     requestHash: createRequestHash({ runId, planReviewComment })
   });
   recordCompletedAction(input.database, runId, "create_issue_comment", "issue", String(input.issue.number), planReviewResult.responseRef, {
     runId,
     planReviewComment
-  }, now);
+  }, now, planReviewCommentKey);
   await transition(input.database, runId, WorkflowState.PlanReviewing, WorkflowState.Implementing, null, WorkflowEvent.AgentPlanReviewApproved, now, labelSync);
 
   validateControlledWorkspace({
@@ -273,7 +276,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     base_sha: requireImplementationBaseSha(preparedWorkspace.baseSha),
     changed_files: diffEvidence.changedFiles
   };
-  const createBranchKey = `${runId}:implementer:create-branch`;
+  const createBranchKey = createIdempotencyKey(runId, "implementer", "create-branch");
   const createBranchHash = createRequestHash({ runId, branch: implementation.branch });
   await executeMaterialGitHubWrite(
     {
@@ -300,7 +303,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
       replay: replayGitHubWrite
     }
   );
-  const commitKey = `${runId}:implementer:commit`;
+  const commitKey = createIdempotencyKey(runId, "implementer", "commit");
   const commitHash = createRequestHash({ runId, files: diffEvidence.changedFiles });
   const commit = await executeMaterialGitHubWrite(
     {
@@ -339,7 +342,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     },
     implementerAttribution
   );
-  const createPrKey = `${runId}:implementer:create-pr`;
+  const createPrKey = createIdempotencyKey(runId, "implementer", "create-pr");
   const createPrHash = createRequestHash({ runId, prBody: prDraft });
   const prResult = await executeMaterialGitHubWrite(
     {
@@ -380,7 +383,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     implementerAttribution
   );
   if (pr !== input.issue.number) {
-    const updatePrKey = `${runId}:implementer:update-pr-marker`;
+    const updatePrKey = createIdempotencyKey(runId, "implementer", "update-pr-marker");
     const updatePrHash = createRequestHash({ runId, prBody });
     await executeMaterialGitHubWrite(
       {
@@ -508,7 +511,13 @@ async function runRequiredPrReviews(input: {
       const prReview = prReviewRun.result;
       const prReviewEvent = mapPrReviewVerdictToEvent(prReview, currentHeadSha);
       if (prReviewEvent === WorkflowEvent.AgentPrReviewChangesRequested) {
-        const reviewKey = `${input.runId}:pr-reviewer:${index + 1}:request-changes:${currentHeadSha}`;
+        const reviewKey = createIdempotencyKey(
+          input.runId,
+          "pr-reviewer",
+          String(index + 1),
+          "request-changes",
+          currentHeadSha
+        );
         const reviewHash = createRequestHash({ runId: input.runId, reviewer: index + 1, prReview, currentHeadSha });
         await executeMaterialGitHubWrite(
           {
@@ -620,7 +629,13 @@ async function runRequiredPrReviews(input: {
           `PR reviewer ${index + 1} did not approve current head ${currentHeadSha}`
         );
       }
-      const reviewKey = `${input.runId}:pr-reviewer:${index + 1}:comment:${currentHeadSha}`;
+      const reviewKey = createIdempotencyKey(
+        input.runId,
+        "pr-reviewer",
+        String(index + 1),
+        "comment",
+        currentHeadSha
+      );
       const reviewHash = createRequestHash({ runId: input.runId, reviewer: index + 1, prReview, currentHeadSha });
       await executeMaterialGitHubWrite(
         {
@@ -719,7 +734,7 @@ async function runImplementerFix(input: {
       input.now
     );
   }
-  const fixCommitKey = `${input.runId}:implementer:fix:${input.fixRound}:commit`;
+  const fixCommitKey = createIdempotencyKey(input.runId, "implementer", "fix", String(input.fixRound), "commit");
   const fixCommitHash = createRequestHash({
     runId: input.runId,
     fixRound: input.fixRound,
@@ -769,11 +784,12 @@ async function runImplementerFix(input: {
   }
   const fixAttribution = attributionFromMetadata(fixRun.metadata, AgentRole.Implementer);
   const fixComment = renderFixComment(fixResult, fixAttribution);
+  const fixCommentKey = createIdempotencyKey(input.runId, "implementer", "fix", String(input.fixRound), "comment");
   const fixCommentResult = await input.input.github.createOrUpdateIssueComment({
     repo: input.input.event.repo,
     issue: input.input.issue.number,
     body: fixComment,
-    idempotencyKey: `${input.runId}:implementer:fix:${input.fixRound}:comment`,
+    idempotencyKey: fixCommentKey,
     requestHash: createRequestHash({ runId: input.runId, fixComment })
   });
   recordCompletedAction(
@@ -784,7 +800,8 @@ async function runImplementerFix(input: {
     String(input.input.issue.number),
     fixCommentResult.responseRef,
     { runId: input.runId, fixComment },
-    input.now
+    input.now,
+    fixCommentKey
   );
   const updatedImplementation: ImplementationResult = {
     ...input.implementation,
@@ -806,7 +823,7 @@ async function runImplementerFix(input: {
     },
     fixAttribution
   );
-  const fixUpdatePrKey = `${input.runId}:implementer:fix:${input.fixRound}:update-pr`;
+  const fixUpdatePrKey = createIdempotencyKey(input.runId, "implementer", "fix", String(input.fixRound), "update-pr");
   const fixUpdatePrHash = createRequestHash({ runId: input.runId, prBody });
   await executeMaterialGitHubWrite(
     {
@@ -1122,11 +1139,12 @@ async function blockRunForMissingResumeArtifacts(
       now
     );
   }
+  const blockedCommentKey = createIdempotencyKey(runId, "resume", "block-comment");
   const blockedCommentResult = await input.github.createOrUpdateIssueComment({
     repo: input.event.repo,
     issue: input.issue.number,
     body: blocked.comment,
-    idempotencyKey: `${runId}:resume:block-comment`,
+    idempotencyKey: blockedCommentKey,
     requestHash: createRequestHash({ runId, comment: blocked.comment })
   });
   recordCompletedAction(
@@ -1137,13 +1155,15 @@ async function blockRunForMissingResumeArtifacts(
     String(input.issue.number),
     blockedCommentResult.responseRef,
     { runId, blockedComment: blocked.comment },
-    now
+    now,
+    blockedCommentKey
   );
+  const labelsKey = createIdempotencyKey(runId, "resume", "block-labels");
   const labelsResult = await input.github.setIssueLabels({
     repo: input.event.repo,
     issue: input.issue.number,
     labels: [...blocked.labels],
-    idempotencyKey: `${runId}:resume:block-labels`,
+    idempotencyKey: labelsKey,
     requestHash: createRequestHash({ runId, labels: blocked.labels })
   });
   recordCompletedAction(
@@ -1154,7 +1174,8 @@ async function blockRunForMissingResumeArtifacts(
     String(input.issue.number),
     labelsResult.responseRef,
     { runId, labels: blocked.labels },
-    now
+    now,
+    labelsKey
   );
   throw new OrchestratorError(ErrorCode.WorkflowArtifactMissing, explanation);
 }
@@ -1184,11 +1205,12 @@ export async function blockRunForPromptInjection(
     WorkflowEvent.PolicyBlock,
     now
   );
+  const blockedCommentKey = createIdempotencyKey(runId, "prompt-injection", "block-comment");
   const blockedCommentResult = await input.github.createOrUpdateIssueComment({
     repo: input.event.repo,
     issue: input.issue.number,
     body: blocked.comment,
-    idempotencyKey: `${runId}:prompt-injection:block-comment`,
+    idempotencyKey: blockedCommentKey,
     requestHash: createRequestHash({ runId, comment: blocked.comment })
   });
   recordCompletedAction(
@@ -1199,13 +1221,15 @@ export async function blockRunForPromptInjection(
     String(input.issue.number),
     blockedCommentResult.responseRef,
     { runId, blockedComment: blocked.comment },
-    now
+    now,
+    blockedCommentKey
   );
+  const labelsKey = createIdempotencyKey(runId, "prompt-injection", "block-labels");
   const labelsResult = await input.github.setIssueLabels({
     repo: input.event.repo,
     issue: input.issue.number,
     labels: [...blocked.labels],
-    idempotencyKey: `${runId}:prompt-injection:block-labels`,
+    idempotencyKey: labelsKey,
     requestHash: createRequestHash({ runId, labels: blocked.labels })
   });
   recordCompletedAction(
@@ -1216,7 +1240,8 @@ export async function blockRunForPromptInjection(
     String(input.issue.number),
     labelsResult.responseRef,
     { runId, labels: blocked.labels },
-    now
+    now,
+    labelsKey
   );
   throw new OrchestratorError(ErrorCode.PromptInjectionPolicyViolation, block.explanation);
 }
@@ -1247,11 +1272,12 @@ async function blockRunForPathPolicy(
     WorkflowEvent.PolicyBlock,
     now
   );
+  const blockedCommentKey = createIdempotencyKey(runId, "policy", "block-comment");
   const blockedCommentResult = await input.github.createOrUpdateIssueComment({
     repo: input.event.repo,
     issue: input.issue.number,
     body: blocked.comment,
-    idempotencyKey: `${runId}:policy:block-comment`,
+    idempotencyKey: blockedCommentKey,
     requestHash: createRequestHash({ runId, comment: blocked.comment })
   });
   recordCompletedAction(
@@ -1262,13 +1288,15 @@ async function blockRunForPathPolicy(
     String(input.issue.number),
     blockedCommentResult.responseRef,
     { runId, blockedComment: blocked.comment },
-    now
+    now,
+    blockedCommentKey
   );
+  const labelsKey = createIdempotencyKey(runId, "policy", "block-labels");
   const labelsResult = await input.github.setIssueLabels({
     repo: input.event.repo,
     issue: input.issue.number,
     labels: [...blocked.labels],
-    idempotencyKey: `${runId}:policy:block-labels`,
+    idempotencyKey: labelsKey,
     requestHash: createRequestHash({ runId, labels: blocked.labels })
   });
   recordCompletedAction(
@@ -1279,7 +1307,8 @@ async function blockRunForPathPolicy(
     String(input.issue.number),
     labelsResult.responseRef,
     { runId, labels: blocked.labels },
-    now
+    now,
+    labelsKey
   );
   throw new OrchestratorError(errorCode, block.explanation);
 }
@@ -1300,7 +1329,7 @@ async function transition(
     expectedHeadSha: headSha,
     nextState,
     nextHeadSha: headSha,
-    idempotencyKey: `${runId}:transition:${eventType}:${nextState}`,
+    idempotencyKey: createIdempotencyKey(runId, "transition", eventType, nextState),
     eventType,
     reason: "End-to-end lifecycle progression.",
     now
@@ -1335,7 +1364,14 @@ async function transitionWithFixRound(
     nextState,
     nextHeadSha,
     nextFixRound,
-    idempotencyKey: `${runId}:transition:${eventType}:${nextState}:${nextFixRound}:${nextHeadSha ?? "none"}`,
+    idempotencyKey: createIdempotencyKey(
+      runId,
+      "transition",
+      eventType,
+      nextState,
+      String(nextFixRound),
+      nextHeadSha ?? "none"
+    ),
     eventType,
     reason: "Fix loop progression.",
     now
@@ -1369,7 +1405,7 @@ async function transitionToFailed(
     expectedHeadSha: headSha,
     nextState: WorkflowState.Failed,
     nextHeadSha: headSha,
-    idempotencyKey: `${runId}:transition:${WorkflowEvent.RetryExhausted}:${WorkflowState.Failed}`,
+    idempotencyKey: createIdempotencyKey(runId, "transition", WorkflowEvent.RetryExhausted, WorkflowState.Failed),
     eventType: WorkflowEvent.RetryExhausted,
     reason: "Fix rounds exhausted.",
     now
@@ -1597,7 +1633,7 @@ async function safeTransition(
     expectedHeadSha: headSha,
     nextState,
     nextHeadSha: headSha,
-    idempotencyKey: `${runId}:transition:${eventType}:${nextState}:${now.getTime()}`,
+    idempotencyKey: createIdempotencyKey(runId, "transition", eventType, nextState, String(now.getTime())),
     eventType,
     reason: "Resume lifecycle progression.",
     now
@@ -1848,7 +1884,7 @@ async function finishMergeAndCloseout(
     return waitingForMergeGateResult(input, runId, pr, headSha);
   }
   assertMergeAllowed(mergeDecision);
-  const mergeKey = `${runId}:merge:pull-request`;
+  const mergeKey = createIdempotencyKey(runId, "merge", "pull-request");
   const mergeHash = createRequestHash({ runId, mergeDecision });
   const merge = await executeMaterialGitHubWrite(
     {
@@ -1888,7 +1924,7 @@ async function finishMergeAndCloseout(
     labelSync
   );
 
-  const deleteBranchKey = `${runId}:merge:delete-branch`;
+  const deleteBranchKey = createIdempotencyKey(runId, "merge", "delete-branch");
   const deleteBranchHash = createRequestHash({ runId, branch: implementation.branch, mergeSha: merge.mergeSha });
   await executeMaterialGitHubWrite(
     {
@@ -1924,7 +1960,7 @@ async function finishMergeAndCloseout(
     tests: input.policy.checks.required.join(", "),
     risk: implementation.risk
   });
-  const finalSummaryKey = `${runId}:merge:final-summary`;
+  const finalSummaryKey = createIdempotencyKey(runId, "merge", "final-summary");
   const finalSummaryHash = createRequestHash({ runId, finalSummary });
   await executeMaterialGitHubWrite(
     {
@@ -1951,7 +1987,7 @@ async function finishMergeAndCloseout(
       replay: replayIssueCommentWrite
     }
   );
-  const closeIssueKey = `${runId}:merge:close-issue`;
+  const closeIssueKey = createIdempotencyKey(runId, "merge", "close-issue");
   const closeIssueHash = createRequestHash({ runId, issue: input.issue.number });
   await executeMaterialGitHubWrite(
     {

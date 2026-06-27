@@ -72,9 +72,11 @@ Records GitHub writes and local side effects that must not be repeated.
 
 Lifecycle material writes (`create_branch`, `commit_changes`, `create_pull_request`, `submit_pull_request_review`, `merge_pull_request`, `delete_branch`, `close_issue`, and merge closeout summary comments) must go through the lifecycle idempotent write executor: check `idempotent_actions` before the adapter call, skip the remote write when the same key and request hash already completed, throw `IDEMPOTENCY_CONFLICT` on hash mismatch, and record a completed row after a new remote write using the same idempotency key passed to the GitHub adapter. Reconciliation backfill remains a recovery path when the remote write succeeded before the local row was committed.
 
+New lifecycle and dispatch keys use stable colon-separated segments produced from the run id plus explicit action scope, target or qualifier, and action name, for example `run_id:implementer:create-branch`, `run_id:pr-reviewer:1:comment:head_sha`, and `run_id:merge:pull-request`. Segment values must be non-empty and must not contain `:` so keys remain readable and non-colliding. Existing records with earlier stable formats remain valid and must not be migrated solely for format normalization.
+
 | Column | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `idempotency_key` | TEXT PRIMARY KEY | Yes | Format: `run_id:state:head_sha:action`. |
+| `idempotency_key` | TEXT PRIMARY KEY | Yes | Stable run-scoped key derived from run id plus action scope, target or qualifier, and action name. |
 | `run_id` | TEXT | Yes | Owning run. |
 | `action_type` | TEXT | Yes | See `github-write.schema.json`. |
 | `target_type` | TEXT | Yes | `issue`, `pull_request`, `branch`, `review`, `check`, `local_worktree`. |
