@@ -759,11 +759,15 @@ MVP 不直接归一化、由替代机制覆盖：
 - 识别 agent marker。
 - 识别人工解除 blocked / pause 的指令。
 
-`pull_request.opened/synchronize/reopened`：
+`pull_request.synchronize`：
 
-- PR body 包含 `Closes #<issue>`。
-- PR 分支匹配 `agent/issue-<number>-<slug>`。
-- 进入 PR review 或 CI waiting。
+- 归一化为 `pull_request.synchronized` 并记录当前 head sha。
+- 若 PR head sha 变化，清空旧 head 上的 review / CI / merge-ready 结论，回到 `pr_reviewing` 或 `ci_waiting`。
+
+`pull_request.opened` / `pull_request.reopened`（§9.1 降级，不经 webhook 归一化）：
+
+- Implementer 创建或重开 PR 后，由 lifecycle 绑定 PR 并进入 `pr_reviewing`。
+- Reconciliation 从 PR artifact（`Closes #<issue>`、分支 `agent/issue-<number>-<slug>`）恢复绑定。
 
 `pull_request_review.submitted`：
 
