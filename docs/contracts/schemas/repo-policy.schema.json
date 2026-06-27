@@ -71,10 +71,12 @@
     },
     "routing": {
       "type": "object",
+      "description": "Reserved for future repository-level routing. MVP runtime does not execute routing.rules; configure active agent selection in local-config agent_routing instead.",
       "additionalProperties": false,
       "properties": {
         "rules": {
           "type": "array",
+          "description": "Reserved policy rules. Accepted by the repository policy schema for forward compatibility, but ignored by the MVP Agent Router.",
           "items": {
             "type": "object",
             "additionalProperties": false,

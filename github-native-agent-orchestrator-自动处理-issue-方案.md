@@ -556,7 +556,7 @@ Agent Router 可基于策略动态选择 agent：
 - 是否允许写代码
 - 是否需要更强 review
 
-MVP 使用 `config/local.json` 中的 `agent_routing`（profile + catalog）做本地 agent 选择。仓库策略中的 `routing.rules` 仍为保留字段，行为见 issue 跟踪；不在 MVP 默认路径中启用。
+MVP 使用 `config/local.json` 中的 `agent_routing`（profile + catalog）做本地 agent 选择。仓库策略中的 `routing.rules` 仅为前向兼容保留字段：schema 接受该字段，但 Agent Router 不读取、不执行，也不会把仓库内 `.github/agent-orchestrator.json` 的规则转换成本地 agent 选择。需要生效的路由必须写入本机 `config/local.json`。
 
 示例（`agent_routing` 片段）：
 
