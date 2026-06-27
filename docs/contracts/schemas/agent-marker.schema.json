@@ -27,6 +27,7 @@
         "REQUEST_CHANGES",
         "BLOCKED",
         "CHECKS_FAILED",
+        "FIX_READY",
         "MERGED"
       ]
     },

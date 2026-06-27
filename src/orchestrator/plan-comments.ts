@@ -86,11 +86,15 @@ ${renderList(fix.test_summary)}
 
 export function renderPrReviewComment(verdict: ReviewerVerdict, pr: number, attribution?: AgentAttribution): string {
   return appendAgentSubmissionFooter(
-    `## PR Review
+    `## Agent PR Review
 
 Verdict: ${verdict.verdict}
 
-${verdict.summary}`,
+${verdict.summary}
+
+## Blocking Findings
+
+${renderBlockingFindings(verdict)}`,
     renderAgentMarker({
       schema: "agent-orchestrator:v1",
       role: "pr_reviewer",

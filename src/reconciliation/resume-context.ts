@@ -227,7 +227,7 @@ function parsePrReviewArtifact(
     verdict,
     risk: "low",
     summary: parseSummaryAfterVerdict(section),
-    blocking_findings: [],
+    blocking_findings: parseBlockingFindings(body),
     required_tests: [...input.requiredTests],
     created_at: input.now.toISOString()
   };

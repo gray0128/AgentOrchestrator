@@ -24,7 +24,8 @@ This directory is the pre-implementation contract layer for GitHub-native Agent 
 ## Required Schemas
 
 - `schemas/task-envelope.schema.json`: Orchestrator-to-agent task input.
-- `schemas/action-proposal.schema.json`: General agent action proposal wrapper.
+- `schemas/action-proposal.schema.json`: Reserved general agent action proposal wrapper; runtime uses role-specific schemas directly.
+- `schemas/triage-result.schema.json`: Triage output for issue dispatch.
 - `schemas/plan-result.schema.json`: Planner output.
 - `schemas/reviewer-verdict.schema.json`: Plan or PR reviewer output.
 - `schemas/implementation-result.schema.json`: Implementer output after code changes.
