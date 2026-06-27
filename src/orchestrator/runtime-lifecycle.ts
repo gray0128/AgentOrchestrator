@@ -182,7 +182,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
   const implementation = {
     ...implementationProposal,
     branch: preparedWorkspace.branch,
-    base_sha: preparedWorkspace.baseSha,
+    base_sha: requireImplementationBaseSha(preparedWorkspace.baseSha),
     changed_files: diffEvidence.changedFiles
   };
   await input.github.createBranch({
@@ -659,6 +659,16 @@ function recordCompletedAction(
 function extractPrNumber(responseRef: string): number | undefined {
   const match = responseRef.match(/(?:pull\/|pr:)([0-9]+)/);
   return match ? Number(match[1]) : undefined;
+}
+
+function requireImplementationBaseSha(baseSha: string | undefined): string {
+  if (!baseSha) {
+    throw new OrchestratorError(
+      ErrorCode.WorkspacePrepareFailed,
+      "Base sha is required before GitHub branch or commit writes"
+    );
+  }
+  return baseSha;
 }
 
 export async function runIssueLifecycleFromStep(

@@ -44,8 +44,8 @@ Stores one active or terminal workflow per issue.
 | `lease_owner` | TEXT | No | Current worker id. |
 | `lease_expires_at` | TEXT | No | ISO 8601 UTC. |
 | `idempotency_key` | TEXT | Yes | Latest state action key. |
-| `last_error_code` | TEXT | No | Registered error code. |
-| `last_error_message` | TEXT | No | Bounded diagnostic. |
+| `last_error_code` | TEXT | No | Registered error code. Populated when dispatch or lifecycle records a blocking `OrchestratorError`, including workspace preparation, missing base sha, and missing diff file failures. |
+| `last_error_message` | TEXT | No | Bounded diagnostic. Redacted before persistence and API responses. |
 | `created_at` | TEXT | Yes | ISO 8601 UTC. |
 | `updated_at` | TEXT | Yes | ISO 8601 UTC. |
 

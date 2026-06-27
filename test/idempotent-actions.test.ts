@@ -6,8 +6,46 @@ import {
   insertWorkflowRun,
   migrateStateDatabase,
   openStateDatabase,
-  recordIdempotentAction
+  recordIdempotentAction,
+  recordRunLastError
 } from "../src/index.ts";
+
+test("recordRunLastError stores registered code and diagnostic message", () => {
+  const database = openStateDatabase();
+  try {
+    migrateStateDatabase(database);
+    insertWorkflowRun(database, {
+      runId: "run_last_error",
+      repoOwner: "octo",
+      repoName: "repo",
+      issueNumber: 123,
+      state: "implementing",
+      idempotencyKey: "run_last_error:implementing:none:start",
+      now: new Date("2026-06-24T00:00:00.000Z")
+    });
+
+    recordRunLastError(database, {
+      runId: "run_last_error",
+      errorCode: ErrorCode.WorkspaceFileMissing,
+      errorMessage: "Changed file is missing from controlled workspace: docs/example.md",
+      now: new Date("2026-06-24T00:01:00.000Z")
+    });
+
+    const row = database
+      .prepare("SELECT last_error_code, last_error_message FROM workflow_runs WHERE run_id = ?")
+      .get("run_last_error") as {
+      readonly last_error_code?: string;
+      readonly last_error_message?: string;
+    };
+    assert.equal(row.last_error_code, ErrorCode.WorkspaceFileMissing);
+    assert.equal(
+      row.last_error_message,
+      "Changed file is missing from controlled workspace: docs/example.md"
+    );
+  } finally {
+    database.close();
+  }
+});
 
 test("idempotent action records skip same key and hash, and block conflicting hashes", () => {
   const database = openStateDatabase();

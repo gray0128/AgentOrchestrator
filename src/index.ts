@@ -261,6 +261,7 @@ export {
   migrateStateDatabase,
   openStateDatabase,
   recordIdempotentAction,
+  recordRunLastError,
   repairWorkflowRunFromArtifacts,
 } from "./state/sqlite-store.ts";
 export {
