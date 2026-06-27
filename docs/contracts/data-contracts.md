@@ -70,6 +70,8 @@ Append-only transition audit.
 
 Records GitHub writes and local side effects that must not be repeated.
 
+Lifecycle material writes (`create_branch`, `commit_changes`, `create_pull_request`, `submit_pull_request_review`, `merge_pull_request`, `delete_branch`, `close_issue`, and merge closeout summary comments) must go through the lifecycle idempotent write executor: check `idempotent_actions` before the adapter call, skip the remote write when the same key and request hash already completed, throw `IDEMPOTENCY_CONFLICT` on hash mismatch, and record a completed row after a new remote write using the same idempotency key passed to the GitHub adapter. Reconciliation backfill remains a recovery path when the remote write succeeded before the local row was committed.
+
 | Column | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `idempotency_key` | TEXT PRIMARY KEY | Yes | Format: `run_id:state:head_sha:action`. |

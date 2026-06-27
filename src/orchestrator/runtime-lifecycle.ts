@@ -16,7 +16,12 @@ import type { GitHubApiAdapter } from "../github/api.ts";
 import { createRequestHash } from "../github/request-hash.ts";
 import { evaluatePathPolicy, resolvePathPolicyBlock } from "../policy/path-policy.ts";
 import type { PathPolicyBlock } from "../policy/path-policy.ts";
-import { casUpdateRunState, getWorkflowRunSnapshot, recordIdempotentAction, repairWorkflowRunFromArtifacts } from "../state/sqlite-store.ts";
+import {
+  casUpdateRunState,
+  getWorkflowRunSnapshot,
+  recordIdempotentAction,
+  repairWorkflowRunFromArtifacts
+} from "../state/sqlite-store.ts";
 import type { StateDatabase, WorkflowRunSnapshot } from "../state/sqlite-store.ts";
 import { WorkflowEvent, WorkflowState } from "../state/state-machine.ts";
 import type { DomainEvent } from "../webhooks/domain-event.ts";
@@ -29,6 +34,13 @@ import type { CheckAggregationResult } from "./pr-gate.ts";
 import { renderPullRequestBody } from "./pr-body.ts";
 import { advanceWebhookEvent, createIssueRunId } from "./webhook-runtime.ts";
 import type { AdvanceWebhookEventResult } from "./webhook-runtime.ts";
+import {
+  executeMaterialGitHubWrite,
+  replayCommitChanges,
+  replayGitHubWrite,
+  replayIssueCommentWrite,
+  replayMergePullRequest
+} from "./idempotent-github-write.ts";
 import { buildBlockedHandling } from "./workflow-control.ts";
 import type { GitHubArtifactReader } from "../reconciliation/github-artifacts.ts";
 import { loadResumeContext } from "../reconciliation/resume-context.ts";
@@ -193,22 +205,62 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     base_sha: requireImplementationBaseSha(preparedWorkspace.baseSha),
     changed_files: diffEvidence.changedFiles
   };
-  await input.github.createBranch({
-    repo: input.event.repo,
-    branch: implementation.branch,
-    baseSha: implementation.base_sha,
-    idempotencyKey: `${runId}:implementer:create-branch`,
-    requestHash: createRequestHash({ runId, branch: implementation.branch })
-  });
-  const commit = await input.github.commitChanges({
-    repo: input.event.repo,
-    branch: implementation.branch,
-    expectedHeadSha: implementation.base_sha,
-    message: `Implement issue #${input.issue.number}`,
-    files: readDiffFileContents(input.workspaceRoot, preparedWorkspace.path, diffEvidence.changedFiles),
-    idempotencyKey: `${runId}:implementer:commit`,
-    requestHash: createRequestHash({ runId, files: diffEvidence.changedFiles })
-  });
+  const createBranchKey = `${runId}:implementer:create-branch`;
+  const createBranchHash = createRequestHash({ runId, branch: implementation.branch });
+  await executeMaterialGitHubWrite(
+    {
+      database: input.database,
+      runId,
+      actionType: "create_branch",
+      targetType: "branch",
+      targetId: implementation.branch,
+      idempotencyKey: createBranchKey,
+      requestHash: createBranchHash,
+      hashValue: { runId, branch: implementation.branch },
+      now
+    },
+    {
+      execute: () =>
+        input.github.createBranch({
+          repo: input.event.repo,
+          branch: implementation.branch,
+          baseSha: implementation.base_sha,
+          idempotencyKey: createBranchKey,
+          requestHash: createBranchHash
+        }),
+      responseRef: (result) => result.responseRef,
+      replay: replayGitHubWrite
+    }
+  );
+  const commitKey = `${runId}:implementer:commit`;
+  const commitHash = createRequestHash({ runId, files: diffEvidence.changedFiles });
+  const commit = await executeMaterialGitHubWrite(
+    {
+      database: input.database,
+      runId,
+      actionType: "commit_changes",
+      targetType: "branch",
+      targetId: implementation.branch,
+      idempotencyKey: commitKey,
+      requestHash: commitHash,
+      hashValue: { runId, files: diffEvidence.changedFiles },
+      now
+    },
+    {
+      execute: () =>
+        input.github.commitChanges({
+          repo: input.event.repo,
+          branch: implementation.branch,
+          expectedHeadSha: implementation.base_sha,
+          message: `Implement issue #${input.issue.number}`,
+          files: readDiffFileContents(input.workspaceRoot, preparedWorkspace.path, diffEvidence.changedFiles),
+          idempotencyKey: commitKey,
+          requestHash: commitHash
+        }),
+      responseRef: (result) => result.headSha,
+      replay: replayCommitChanges
+    }
+  );
   const implementerAttribution = attributionFromMetadata(implementationRun.metadata, AgentRole.Implementer);
   const prDraft = renderPullRequestBody(
     {
@@ -219,16 +271,36 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     },
     implementerAttribution
   );
-  const prResult = await input.github.createOrUpdatePullRequest({
-    repo: input.event.repo,
-    title: input.issue.title,
-    body: prDraft,
-    headBranch: implementation.branch,
-    baseBranch: input.repo.default_branch,
-    issue: input.issue.number,
-    idempotencyKey: `${runId}:implementer:create-pr`,
-    requestHash: createRequestHash({ runId, prBody: prDraft })
-  });
+  const createPrKey = `${runId}:implementer:create-pr`;
+  const createPrHash = createRequestHash({ runId, prBody: prDraft });
+  const prResult = await executeMaterialGitHubWrite(
+    {
+      database: input.database,
+      runId,
+      actionType: "create_pull_request",
+      targetType: "pull_request",
+      targetId: String(input.issue.number),
+      idempotencyKey: createPrKey,
+      requestHash: createPrHash,
+      hashValue: { runId, prBody: prDraft },
+      now
+    },
+    {
+      execute: () =>
+        input.github.createOrUpdatePullRequest({
+          repo: input.event.repo,
+          title: input.issue.title,
+          body: prDraft,
+          headBranch: implementation.branch,
+          baseBranch: input.repo.default_branch,
+          issue: input.issue.number,
+          idempotencyKey: createPrKey,
+          requestHash: createPrHash
+        }),
+      responseRef: (result) => result.responseRef,
+      replay: replayGitHubWrite
+    }
+  );
   const pr = extractPrNumber(prResult.responseRef) ?? input.issue.number;
   const prBody = renderPullRequestBody(
     {
@@ -240,16 +312,36 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     implementerAttribution
   );
   if (pr !== input.issue.number) {
-    await input.github.createOrUpdatePullRequest({
-      repo: input.event.repo,
-      title: input.issue.title,
-      body: prBody,
-      headBranch: implementation.branch,
-      baseBranch: input.repo.default_branch,
-      issue: input.issue.number,
-      idempotencyKey: `${runId}:implementer:update-pr-marker`,
-      requestHash: createRequestHash({ runId, prBody })
-    });
+    const updatePrKey = `${runId}:implementer:update-pr-marker`;
+    const updatePrHash = createRequestHash({ runId, prBody });
+    await executeMaterialGitHubWrite(
+      {
+        database: input.database,
+        runId,
+        actionType: "create_pull_request",
+        targetType: "pull_request",
+        targetId: String(pr),
+        idempotencyKey: updatePrKey,
+        requestHash: updatePrHash,
+        hashValue: { runId, prBody },
+        now
+      },
+      {
+        execute: () =>
+          input.github.createOrUpdatePullRequest({
+            repo: input.event.repo,
+            title: input.issue.title,
+            body: prBody,
+            headBranch: implementation.branch,
+            baseBranch: input.repo.default_branch,
+            issue: input.issue.number,
+            idempotencyKey: updatePrKey,
+            requestHash: updatePrHash
+          }),
+        responseRef: (result) => result.responseRef,
+        replay: replayGitHubWrite
+      }
+    );
   }
   repairWorkflowRunFromArtifacts(input.database, {
     runId,
@@ -339,19 +431,39 @@ async function runRequiredPrReviews(input: {
       const prReview = prReviewRun.result;
       const prReviewEvent = mapPrReviewVerdictToEvent(prReview, currentHeadSha);
       if (prReviewEvent === WorkflowEvent.AgentPrReviewChangesRequested) {
-        await input.input.github.submitPullRequestReview({
-          repo: input.input.event.repo,
-          pr: input.pr,
-          headSha: currentHeadSha,
-          event: "REQUEST_CHANGES",
-          body: renderPrReviewComment(
-            prReview,
-            input.pr,
-            attributionFromMetadata(prReviewRun.metadata, AgentRole.PrReviewer)
-          ),
-          idempotencyKey: `${input.runId}:pr-reviewer:${index + 1}:request-changes:${currentHeadSha}`,
-          requestHash: createRequestHash({ runId: input.runId, reviewer: index + 1, prReview, currentHeadSha })
-        });
+        const reviewKey = `${input.runId}:pr-reviewer:${index + 1}:request-changes:${currentHeadSha}`;
+        const reviewHash = createRequestHash({ runId: input.runId, reviewer: index + 1, prReview, currentHeadSha });
+        await executeMaterialGitHubWrite(
+          {
+            database: input.input.database,
+            runId: input.runId,
+            actionType: "submit_pull_request_review",
+            targetType: "pull_request",
+            targetId: String(input.pr),
+            idempotencyKey: reviewKey,
+            requestHash: reviewHash,
+            hashValue: { runId: input.runId, reviewer: index + 1, prReview, currentHeadSha },
+            now: input.now
+          },
+          {
+            execute: () =>
+              input.input.github.submitPullRequestReview({
+                repo: input.input.event.repo,
+                pr: input.pr,
+                headSha: currentHeadSha,
+                event: "REQUEST_CHANGES",
+                body: renderPrReviewComment(
+                  prReview,
+                  input.pr,
+                  attributionFromMetadata(prReviewRun.metadata, AgentRole.PrReviewer)
+                ),
+                idempotencyKey: reviewKey,
+                requestHash: reviewHash
+              }),
+            responseRef: (result) => result.responseRef,
+            replay: replayGitHubWrite
+          }
+        );
         const snapshot = getWorkflowRunSnapshot(input.input.database, { runId: input.runId });
         const fixDecision = decideFixLoop({
           currentState: WorkflowState.PrReviewing,
@@ -427,19 +539,39 @@ async function runRequiredPrReviews(input: {
           `PR reviewer ${index + 1} did not approve current head ${currentHeadSha}`
         );
       }
-      await input.input.github.submitPullRequestReview({
-        repo: input.input.event.repo,
-        pr: input.pr,
-        headSha: currentHeadSha,
-        event: "COMMENT",
-        body: renderPrReviewComment(
-          prReview,
-          input.pr,
-          attributionFromMetadata(prReviewRun.metadata, AgentRole.PrReviewer)
-        ),
-        idempotencyKey: `${input.runId}:pr-reviewer:${index + 1}:comment:${currentHeadSha}`,
-        requestHash: createRequestHash({ runId: input.runId, reviewer: index + 1, prReview, currentHeadSha })
-      });
+      const reviewKey = `${input.runId}:pr-reviewer:${index + 1}:comment:${currentHeadSha}`;
+      const reviewHash = createRequestHash({ runId: input.runId, reviewer: index + 1, prReview, currentHeadSha });
+      await executeMaterialGitHubWrite(
+        {
+          database: input.input.database,
+          runId: input.runId,
+          actionType: "submit_pull_request_review",
+          targetType: "pull_request",
+          targetId: String(input.pr),
+          idempotencyKey: reviewKey,
+          requestHash: reviewHash,
+          hashValue: { runId: input.runId, reviewer: index + 1, prReview, currentHeadSha },
+          now: input.now
+        },
+        {
+          execute: () =>
+            input.input.github.submitPullRequestReview({
+              repo: input.input.event.repo,
+              pr: input.pr,
+              headSha: currentHeadSha,
+              event: "COMMENT",
+              body: renderPrReviewComment(
+                prReview,
+                input.pr,
+                attributionFromMetadata(prReviewRun.metadata, AgentRole.PrReviewer)
+              ),
+              idempotencyKey: reviewKey,
+              requestHash: reviewHash
+            }),
+          responseRef: (result) => result.responseRef,
+          replay: replayGitHubWrite
+        }
+      );
       approved.push(prReview);
     }
     if (!restarted) {
@@ -493,15 +625,39 @@ async function runImplementerFix(input: {
       input.now
     );
   }
-  const commit = await input.input.github.commitChanges({
-    repo: input.input.event.repo,
-    branch: preparedWorkspace.branch,
-    expectedHeadSha: input.headSha,
-    message: `Fix issue #${input.input.issue.number} (round ${input.fixRound})`,
-    files: readDiffFileContents(input.input.workspaceRoot, preparedWorkspace.path, diffEvidence.changedFiles),
-    idempotencyKey: `${input.runId}:implementer:fix:${input.fixRound}:commit`,
-    requestHash: createRequestHash({ runId: input.runId, fixRound: input.fixRound, files: diffEvidence.changedFiles })
+  const fixCommitKey = `${input.runId}:implementer:fix:${input.fixRound}:commit`;
+  const fixCommitHash = createRequestHash({
+    runId: input.runId,
+    fixRound: input.fixRound,
+    files: diffEvidence.changedFiles
   });
+  const commit = await executeMaterialGitHubWrite(
+    {
+      database: input.input.database,
+      runId: input.runId,
+      actionType: "commit_changes",
+      targetType: "branch",
+      targetId: preparedWorkspace.branch,
+      idempotencyKey: fixCommitKey,
+      requestHash: fixCommitHash,
+      hashValue: { runId: input.runId, fixRound: input.fixRound, files: diffEvidence.changedFiles },
+      now: input.now
+    },
+    {
+      execute: () =>
+        input.input.github.commitChanges({
+          repo: input.input.event.repo,
+          branch: preparedWorkspace.branch,
+          expectedHeadSha: input.headSha,
+          message: `Fix issue #${input.input.issue.number} (round ${input.fixRound})`,
+          files: readDiffFileContents(input.input.workspaceRoot, preparedWorkspace.path, diffEvidence.changedFiles),
+          idempotencyKey: fixCommitKey,
+          requestHash: fixCommitHash
+        }),
+      responseRef: (result) => result.headSha,
+      replay: replayCommitChanges
+    }
+  );
   const fixResult = buildFixResult({
     implementation: fixProposal,
     runId: input.runId,
@@ -556,16 +712,36 @@ async function runImplementerFix(input: {
     },
     fixAttribution
   );
-  await input.input.github.createOrUpdatePullRequest({
-    repo: input.input.event.repo,
-    title: input.input.issue.title,
-    body: prBody,
-    headBranch: preparedWorkspace.branch,
-    baseBranch: input.input.repo.default_branch,
-    issue: input.input.issue.number,
-    idempotencyKey: `${input.runId}:implementer:fix:${input.fixRound}:update-pr`,
-    requestHash: createRequestHash({ runId: input.runId, prBody })
-  });
+  const fixUpdatePrKey = `${input.runId}:implementer:fix:${input.fixRound}:update-pr`;
+  const fixUpdatePrHash = createRequestHash({ runId: input.runId, prBody });
+  await executeMaterialGitHubWrite(
+    {
+      database: input.input.database,
+      runId: input.runId,
+      actionType: "create_pull_request",
+      targetType: "pull_request",
+      targetId: String(input.pr),
+      idempotencyKey: fixUpdatePrKey,
+      requestHash: fixUpdatePrHash,
+      hashValue: { runId: input.runId, prBody },
+      now: input.now
+    },
+    {
+      execute: () =>
+        input.input.github.createOrUpdatePullRequest({
+          repo: input.input.event.repo,
+          title: input.input.issue.title,
+          body: prBody,
+          headBranch: preparedWorkspace.branch,
+          baseBranch: input.input.repo.default_branch,
+          issue: input.input.issue.number,
+          idempotencyKey: fixUpdatePrKey,
+          requestHash: fixUpdatePrHash
+        }),
+      responseRef: (result) => result.responseRef,
+      replay: replayGitHubWrite
+    }
+  );
   return commit.headSha;
 }
 
@@ -1012,10 +1188,12 @@ function recordCompletedAction(
   targetId: string,
   responseRef: string,
   hashValue: unknown,
-  now: Date
+  now: Date,
+  idempotencyKey?: string
 ): void {
   recordIdempotentAction(database, {
-    idempotencyKey: `${runId}:runtime:${actionType}:${targetType}:${targetId}:${responseRef}`,
+    idempotencyKey:
+      idempotencyKey ?? `${runId}:runtime:${actionType}:${targetType}:${targetId}:${responseRef}`,
     runId,
     actionType,
     targetType,
@@ -1436,14 +1614,34 @@ async function finishMergeAndCloseout(
     return waitingForMergeGateResult(input, runId, pr, headSha);
   }
   assertMergeAllowed(mergeDecision);
-  const merge = await input.github.mergePullRequest({
-    repo: input.event.repo,
-    pr,
-    expectedHeadSha: headSha,
-    method: mergeDecision.merge_method,
-    idempotencyKey: `${runId}:merge:pull-request`,
-    requestHash: createRequestHash({ runId, mergeDecision })
-  });
+  const mergeKey = `${runId}:merge:pull-request`;
+  const mergeHash = createRequestHash({ runId, mergeDecision });
+  const merge = await executeMaterialGitHubWrite(
+    {
+      database: input.database,
+      runId,
+      actionType: "merge_pull_request",
+      targetType: "pull_request",
+      targetId: String(pr),
+      idempotencyKey: mergeKey,
+      requestHash: mergeHash,
+      hashValue: { runId, mergeDecision },
+      now
+    },
+    {
+      execute: () =>
+        input.github.mergePullRequest({
+          repo: input.event.repo,
+          pr,
+          expectedHeadSha: headSha,
+          method: mergeDecision.merge_method,
+          idempotencyKey: mergeKey,
+          requestHash: mergeHash
+        }),
+      responseRef: (result) => result.mergeSha,
+      replay: replayMergePullRequest
+    }
+  );
   const beforeMerged = getWorkflowRunSnapshot(input.database, { runId });
   safeTransition(
     input.database,
@@ -1455,13 +1653,33 @@ async function finishMergeAndCloseout(
     now
   );
 
-  await input.github.deleteBranch({
-    repo: input.event.repo,
-    branch: implementation.branch,
-    afterMergeSha: merge.mergeSha,
-    idempotencyKey: `${runId}:merge:delete-branch`,
-    requestHash: createRequestHash({ runId, branch: implementation.branch, mergeSha: merge.mergeSha })
-  });
+  const deleteBranchKey = `${runId}:merge:delete-branch`;
+  const deleteBranchHash = createRequestHash({ runId, branch: implementation.branch, mergeSha: merge.mergeSha });
+  await executeMaterialGitHubWrite(
+    {
+      database: input.database,
+      runId,
+      actionType: "delete_branch",
+      targetType: "branch",
+      targetId: implementation.branch,
+      idempotencyKey: deleteBranchKey,
+      requestHash: deleteBranchHash,
+      hashValue: { runId, branch: implementation.branch, mergeSha: merge.mergeSha },
+      now
+    },
+    {
+      execute: () =>
+        input.github.deleteBranch({
+          repo: input.event.repo,
+          branch: implementation.branch,
+          afterMergeSha: merge.mergeSha,
+          idempotencyKey: deleteBranchKey,
+          requestHash: deleteBranchHash
+        }),
+      responseRef: (result) => result.responseRef,
+      replay: replayGitHubWrite
+    }
+  );
   const finalSummary = renderFinalSummary({
     runId,
     issue: input.issue.number,
@@ -1471,19 +1689,59 @@ async function finishMergeAndCloseout(
     tests: input.policy.checks.required.join(", "),
     risk: implementation.risk
   });
-  await input.github.createOrUpdateIssueComment({
-    repo: input.event.repo,
-    issue: input.issue.number,
-    body: finalSummary,
-    idempotencyKey: `${runId}:merge:final-summary`,
-    requestHash: createRequestHash({ runId, finalSummary })
-  });
-  await input.github.closeIssue({
-    repo: input.event.repo,
-    issue: input.issue.number,
-    idempotencyKey: `${runId}:merge:close-issue`,
-    requestHash: createRequestHash({ runId, issue: input.issue.number })
-  });
+  const finalSummaryKey = `${runId}:merge:final-summary`;
+  const finalSummaryHash = createRequestHash({ runId, finalSummary });
+  await executeMaterialGitHubWrite(
+    {
+      database: input.database,
+      runId,
+      actionType: "create_issue_comment",
+      targetType: "issue",
+      targetId: String(input.issue.number),
+      idempotencyKey: finalSummaryKey,
+      requestHash: finalSummaryHash,
+      hashValue: { runId, finalSummary },
+      now
+    },
+    {
+      execute: () =>
+        input.github.createOrUpdateIssueComment({
+          repo: input.event.repo,
+          issue: input.issue.number,
+          body: finalSummary,
+          idempotencyKey: finalSummaryKey,
+          requestHash: finalSummaryHash
+        }),
+      responseRef: (result) => result.responseRef,
+      replay: replayIssueCommentWrite
+    }
+  );
+  const closeIssueKey = `${runId}:merge:close-issue`;
+  const closeIssueHash = createRequestHash({ runId, issue: input.issue.number });
+  await executeMaterialGitHubWrite(
+    {
+      database: input.database,
+      runId,
+      actionType: "close_issue",
+      targetType: "issue",
+      targetId: String(input.issue.number),
+      idempotencyKey: closeIssueKey,
+      requestHash: closeIssueHash,
+      hashValue: { runId, issue: input.issue.number },
+      now
+    },
+    {
+      execute: () =>
+        input.github.closeIssue({
+          repo: input.event.repo,
+          issue: input.issue.number,
+          idempotencyKey: closeIssueKey,
+          requestHash: closeIssueHash
+        }),
+      responseRef: (result) => result.responseRef,
+      replay: replayGitHubWrite
+    }
+  );
   transition(input.database, runId, WorkflowState.Merged, WorkflowState.IssueClosed, headSha, WorkflowEvent.IssueCloseoutCompleted, now);
 
   const resultSnapshot = requireWorkflowRunSnapshot(input.database, runId, "closeout");
