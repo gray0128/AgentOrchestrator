@@ -3,8 +3,9 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
-import { DomainEventType, normalizeGitHubWebhook } from "../src/webhooks/domain-event.ts";
-import type { DomainEvent } from "../src/index.ts";
+import { DomainEventType, WebhookDomainEventType, normalizeGitHubWebhook } from "../src/webhooks/domain-event.ts";
+import { WorkflowEvent } from "../src/state/state-machine.ts";
+import type { DomainEvent, WebhookDomainEvent, WorkflowDomainEvent } from "../src/index.ts";
 
 const receivedAt = new Date("2026-06-24T00:00:00.000Z");
 
@@ -282,19 +283,94 @@ test("unsupported webhook events are ignored", () => {
   assert.equal(event, undefined);
 });
 
+test("domain event schema enum matches the broad TypeScript domain-event type", async () => {
+  const schema = await readDomainEventSchema();
+  assert.deepEqual(new Set(schema.properties.event_type.enum), new Set(Object.values(DomainEventType)));
+});
+
+test("schema keeps webhook events separate from reconciliation and manual workflow events", async () => {
+  const schema = await readDomainEventSchema();
+  const webhookEvents = conditionalEventTypes(schema, "webhook");
+  const workflowEvents = conditionalEventTypes(schema, "reconciliation");
+
+  assert.deepEqual(new Set(webhookEvents), new Set(Object.values(WebhookDomainEventType)));
+  assert.deepEqual(new Set(workflowEvents), new Set(Object.values(WorkflowEvent)));
+  assert.ok(!webhookEvents.includes(WorkflowEvent.AgentImplementationReady));
+  assert.ok(!workflowEvents.includes(WebhookDomainEventType.IssueCommentDispatchRequested));
+});
+
+test("reconciliation and manual workflow events have expressible TypeScript domain-event types", async () => {
+  const reconciliationEvent: WorkflowDomainEvent = {
+    schema: "agent-orchestrator.domain-event.v1",
+    event_type: WorkflowEvent.AgentImplementationReady,
+    delivery_id: "reconcile-1",
+    repo: { owner: "octo", name: "repo" },
+    issue: 123,
+    pr: 45,
+    source: "reconciliation",
+    payload_ref: "reconciliation:run-1",
+    created_at: receivedAt.toISOString()
+  };
+  const manualEvent: WorkflowDomainEvent = {
+    ...reconciliationEvent,
+    event_type: WorkflowEvent.ControlPause,
+    delivery_id: "manual-1",
+    source: "manual",
+    payload_ref: "manual:operator"
+  };
+
+  await assertDomainEventMatchesSchema(reconciliationEvent);
+  await assertDomainEventMatchesSchema(manualEvent);
+});
+
+test("webhook normalization returns webhook-sourced domain events only", async () => {
+  const event: WebhookDomainEvent | undefined = normalizeGitHubWebhook({
+    eventName: "issues",
+    deliveryId: "delivery-webhook-source",
+    receivedAt,
+    payload: issuePayload("labeled", "agent:autopilot")
+  });
+
+  await assertDomainEventMatchesSchema(event);
+  assert.equal(event.source, "webhook");
+  assert.equal(event.event_type, WebhookDomainEventType.IssueAutopilotRequested);
+});
+
 async function assertDomainEventMatchesSchema(event: DomainEvent | undefined): Promise<void> {
   assert.ok(event);
-  const schemaRaw = await readFile(path.join("docs", "contracts", "schemas", "domain-event.schema.json"), "utf8");
-  const schema = JSON.parse(schemaRaw) as {
-    readonly required: readonly string[];
-    readonly properties: { readonly event_type: { readonly enum: readonly string[] } };
-  };
+  const schema = await readDomainEventSchema();
 
   for (const field of schema.required) {
     assert.ok(field in event, `missing required field ${field}`);
   }
   assert.equal(event.schema, "agent-orchestrator.domain-event.v1");
   assert.ok(schema.properties.event_type.enum.includes(event.event_type));
+  assert.ok(conditionalEventTypes(schema, event.source).includes(event.event_type));
+}
+
+type DomainEventSchema = {
+  readonly required: readonly string[];
+  readonly properties: { readonly event_type: { readonly enum: readonly string[] } };
+  readonly allOf: readonly {
+    readonly if: {
+      readonly properties: { readonly source: { readonly const?: string; readonly enum?: readonly string[] } };
+    };
+    readonly then: { readonly properties: { readonly event_type: { readonly enum: readonly string[] } } };
+  }[];
+};
+
+async function readDomainEventSchema(): Promise<DomainEventSchema> {
+  const schemaRaw = await readFile(path.join("docs", "contracts", "schemas", "domain-event.schema.json"), "utf8");
+  return JSON.parse(schemaRaw) as DomainEventSchema;
+}
+
+function conditionalEventTypes(schema: DomainEventSchema, source: DomainEvent["source"]): readonly string[] {
+  const match = schema.allOf.find((condition) => {
+    const sourceConstraint = condition.if.properties.source;
+    return sourceConstraint.const === source || sourceConstraint.enum?.includes(source);
+  });
+  assert.ok(match, `missing source condition for ${source}`);
+  return match.then.properties.event_type.enum;
 }
 
 function issuePayload(action: string, label: string) {
