@@ -1252,7 +1252,7 @@ async function handleWebhookRequest(input: {
     }
     const dispatchContext =
       input.lifecycle && domainEvent
-        ? buildDispatchContext(
+        ? await buildDispatchContext(
             input.lifecycle,
             domainEvent,
             parsedPayload,
@@ -1381,14 +1381,14 @@ function isActorDiscardedByPolicy(
   return shouldDiscardActor(event.actor, repository.policy.autopilot);
 }
 
-function buildDispatchContext(
+async function buildDispatchContext(
   lifecycle: ServeLifecycleOptions,
   event: DomainEvent,
   payload: unknown,
   database: StateDatabase,
   github: GitHubApiAdapter,
   fallbackPolicySummary: string,
-):
+): Promise<
   | {
       readonly kind: "dispatch";
       readonly lifecycleInput: RunIssueLifecycleInput;
@@ -1400,7 +1400,8 @@ function buildDispatchContext(
       readonly lifecycleInput: RunIssueLifecycleInput;
       readonly runId: string;
     }
-  | undefined {
+  | undefined
+> {
   if (isCheckDomainEvent(event)) {
     return buildCheckResumeContext(
       lifecycle,
@@ -1472,19 +1473,20 @@ function buildDispatchContext(
   };
 }
 
-function buildCheckResumeContext(
+async function buildCheckResumeContext(
   lifecycle: ServeLifecycleOptions,
   event: DomainEvent,
   database: StateDatabase,
   github: GitHubApiAdapter,
   fallbackPolicySummary: string,
-):
+): Promise<
   | {
       readonly kind: "resume";
       readonly lifecycleInput: RunIssueLifecycleInput;
       readonly runId: string;
     }
-  | undefined {
+  | undefined
+> {
   if (!event.pr) {
     return undefined;
   }
@@ -1508,12 +1510,18 @@ function buildCheckResumeContext(
     );
   }
 
+  const prContext = await github.readPullRequestContext({
+    repo: repository.repo,
+    pr: event.pr,
+    issue: snapshot.run.issue_number,
+    requiredChecks: repository.policy.checks.required,
+  });
   const issue: RuntimeLifecycleIssue = {
     number: snapshot.run.issue_number,
     title: `Issue #${snapshot.run.issue_number}`,
     body: "",
     author: event.actor ?? "unknown",
-    labels: [],
+    labels: prContext.labels,
   };
   const workspaceContext = buildWorkspaceContext(lifecycle.workspaceRoot, repository, issue);
 

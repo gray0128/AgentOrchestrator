@@ -1001,6 +1001,136 @@ test("serve runtime resumes ci_waiting from workflow_run webhook", async (contex
   }
 });
 
+test("serve runtime does not merge on ci_waiting resume when issue has a late blocking label", async (context) => {
+  const fixture = createGitWorkspaceFixture({
+    repoName: "repo",
+    issue: 123,
+    issueTitle: "Low-risk docs update",
+  });
+  const database = openStateDatabase();
+  migrateStateDatabase(database);
+  const github = new FakeGitHubApiAdapter();
+  let runtime;
+  try {
+    runtime = await startServeRuntime({
+      host: "127.0.0.1",
+      port: 0,
+      database,
+      databasePath: ":memory:",
+      webhookSecret: "secret",
+      github,
+      lifecycle: {
+        agents: lifecycleAgents(),
+        workspaceRoot: fixture.workspaceRoot,
+        artifactReader: fakeGitHubArtifactReader(
+          github,
+          buildResumeArtifactState({
+            runId: "run_octo_repo_issue_123",
+            issue: 123,
+            pr: 1,
+            headSha: "fake-1",
+            branch: "agent/issue-123-low-risk-docs-update",
+          }),
+        ),
+        repositories: [
+          {
+            repo: { owner: "octo", name: "repo", default_branch: "main" },
+            localPath: fixture.sourceRepoPath,
+            policyPath: "/tmp/repo/.github/agent-orchestrator.json",
+            policy: repoPolicy(),
+          },
+        ],
+      },
+    });
+  } catch (error) {
+    database.close();
+    if (error instanceof Error && "code" in error && error.code === "EPERM") {
+      context.skip("sandbox does not allow binding a local TCP listener");
+      return;
+    }
+    throw error;
+  }
+
+  try {
+    const issuePayload = JSON.stringify({
+      action: "labeled",
+      label: { name: "agent:autopilot" },
+      repository: { name: "repo", owner: { login: "octo" } },
+      issue: {
+        number: 123,
+        title: "Low-risk docs update",
+        body: "Update docs.",
+        user: { login: "alice" },
+        labels: [{ name: "agent:autopilot" }],
+      },
+      sender: { login: "alice" },
+    });
+    const issueResponse = await fetch(
+      `http://${runtime.host}:${runtime.port}/webhook`,
+      {
+        method: "POST",
+        headers: {
+          "x-github-event": "issues",
+          "x-github-delivery": "delivery-workflow-resume-blocking-start",
+          "x-hub-signature-256": createSignature(issuePayload, "secret"),
+        },
+        body: issuePayload,
+      },
+    );
+    const issueBody = await issueResponse.json();
+
+    assert.equal(issueResponse.status, 202);
+    assert.equal(issueBody.ok, true);
+    assert.equal(issueBody.advancement.dispatched, true);
+    assert.equal(getWorkflowRunSnapshot(database, { runId: "run_octo_repo_issue_123" })?.run.state, WorkflowState.CiWaiting);
+
+    await github.setIssueLabels({
+      repo: { owner: "octo", name: "repo" },
+      issue: 123,
+      labels: ["agent:autopilot", "agent:pr-review", "agent:no-merge"],
+      idempotencyKey: "test:late-blocking-label",
+      requestHash: "test:late-blocking-label",
+    });
+    github.checkSummaries.set("octo/repo#1@fake-1", {
+      responseRef: "checks:1:fake-1",
+      headSha: "fake-1",
+      checks: [{ name: "npm run check", conclusion: "success" }],
+    });
+    const workflowPayload = JSON.stringify({
+      action: "completed",
+      repository: { name: "repo", owner: { login: "octo" } },
+      workflow_run: {
+        conclusion: "success",
+        head_sha: "fake-1",
+        pull_requests: [{ number: 1 }],
+      },
+      sender: { login: "alice" },
+    });
+    const workflowResponse = await fetch(
+      `http://${runtime.host}:${runtime.port}/webhook`,
+      {
+        method: "POST",
+        headers: {
+          "x-github-event": "workflow_run",
+          "x-github-delivery": "delivery-workflow-resume-blocking-label",
+          "x-hub-signature-256": createSignature(workflowPayload, "secret"),
+        },
+        body: workflowPayload,
+      },
+    );
+    const workflowBody = await workflowResponse.json();
+
+    assert.equal(workflowResponse.status, 400);
+    assert.equal(workflowBody.ok, false);
+    assert.equal(workflowBody.error, "MERGE_GATE_BLOCKED");
+    assert.equal(getWorkflowRunSnapshot(database, { runId: "run_octo_repo_issue_123" })?.run.state, WorkflowState.MergeReady);
+    assert.equal(github.closedIssues.length, 0);
+    assert.equal(github.merges.length, 0);
+  } finally {
+    await runtime.close();
+  }
+});
+
 test("reconcile CLI reports dry-run candidates from input snapshot", async () => {
   const dir = mkdtempSync(join(tmpdir(), "agent-orchestrator-cli-"));
   const input = join(dir, "reconcile.json");
