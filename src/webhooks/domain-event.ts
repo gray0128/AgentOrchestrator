@@ -62,6 +62,11 @@ type GitHubWebhookPayload = {
     readonly head_sha?: string;
     readonly pull_requests?: readonly { readonly number?: number }[];
   };
+  readonly workflow_run?: {
+    readonly conclusion?: string | null;
+    readonly head_sha?: string;
+    readonly pull_requests?: readonly { readonly number?: number }[];
+  };
   readonly sender?: { readonly login?: string };
 };
 
@@ -98,6 +103,10 @@ export function normalizeGitHubWebhook(input: NormalizeGitHubWebhookInput): Doma
 
   if (input.eventName === "check_run") {
     return normalizeCheckRunEvent(input.payload, base);
+  }
+
+  if (input.eventName === "workflow_run") {
+    return normalizeWorkflowRunEvent(input.payload, base);
   }
 
   return undefined;
@@ -243,6 +252,27 @@ function normalizeCheckRunEvent(
 
   const pr = checkRun.pull_requests?.find((candidate) => candidate.number)?.number;
   const eventType = checkRunEventType(payload.action, checkRun.conclusion);
+
+  return {
+    ...base,
+    event_type: eventType,
+    pr,
+    head_sha: headSha
+  };
+}
+
+function normalizeWorkflowRunEvent(
+  payload: GitHubWebhookPayload,
+  base: Omit<DomainEvent, "event_type">
+): DomainEvent | undefined {
+  const workflowRun = payload.workflow_run;
+  const headSha = workflowRun?.head_sha;
+  if (!workflowRun || !headSha) {
+    return undefined;
+  }
+
+  const pr = workflowRun.pull_requests?.find((candidate) => candidate.number)?.number;
+  const eventType = checkRunEventType(payload.action, workflowRun.conclusion);
 
   return {
     ...base,

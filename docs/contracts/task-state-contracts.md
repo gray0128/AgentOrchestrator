@@ -51,6 +51,16 @@
 - After a fix push, the next state is `pr_reviewing`; the system must not jump directly to `merge_ready`.
 - Check/status events only apply when their sha equals the current PR head sha.
 
+## CI Check Recovery Contract
+
+When required checks are evaluated for the current PR head:
+
+1. `checks.succeeded` transitions `ci_waiting` -> `merge_ready` and allows the merge gate to run for that same `head_sha`.
+2. `checks.pending` or missing required checks keeps the run in `ci_waiting`; the orchestrator must not merge, fail, or consume fix rounds while checks are still pending.
+3. `checks.failed` transitions `ci_waiting` -> `fixing` while fix rounds remain, then reuses the implementer fix loop and returns to `pr_reviewing` on the new head.
+4. If fix rounds are exhausted, a current-head `checks.failed` transitions to `failed` with `retry.exhausted`.
+5. Check evidence is bound to the current PR `head_sha`; stale-head check events and summaries must not advance state or satisfy merge readiness.
+
 ## PR Review Fix Loop Contract
 
 When a current-head PR reviewer returns `REQUEST_CHANGES`:

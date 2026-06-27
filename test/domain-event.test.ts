@@ -80,6 +80,18 @@ test("check_run events normalize to succeeded, failed, or pending", () => {
   assert.equal(success?.head_sha, "abc123");
 });
 
+test("workflow_run events normalize to succeeded, failed, or pending", () => {
+  const success = normalizeWorkflowRun("completed", "success");
+  const failure = normalizeWorkflowRun("completed", "failure");
+  const pending = normalizeWorkflowRun("requested", null);
+
+  assert.equal(success?.event_type, DomainEventType.ChecksSucceeded);
+  assert.equal(failure?.event_type, DomainEventType.ChecksFailed);
+  assert.equal(pending?.event_type, DomainEventType.ChecksPending);
+  assert.equal(success?.pr, 45);
+  assert.equal(success?.head_sha, "abc123");
+});
+
 test("issue_comment mention normalizes to comment dispatch when autopilot label exists", async () => {
   const event = normalizeGitHubWebhook({
     eventName: "issue_comment",
@@ -197,6 +209,24 @@ function normalizeCheckRun(action: string, conclusion: string | null) {
       action,
       repository: repo(),
       check_run: {
+        conclusion,
+        head_sha: "abc123",
+        pull_requests: [{ number: 45 }]
+      },
+      sender: { login: "alice" }
+    }
+  });
+}
+
+function normalizeWorkflowRun(action: string, conclusion: string | null) {
+  return normalizeGitHubWebhook({
+    eventName: "workflow_run",
+    deliveryId: `delivery-workflow-${action}-${conclusion ?? "none"}`,
+    receivedAt,
+    payload: {
+      action,
+      repository: repo(),
+      workflow_run: {
         conclusion,
         head_sha: "abc123",
         pull_requests: [{ number: 45 }]

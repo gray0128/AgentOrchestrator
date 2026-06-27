@@ -90,7 +90,7 @@ export type RunIssueLifecycleResult = {
   readonly issue: number;
   readonly pr: number;
   readonly headSha: string;
-  readonly mergeSha: string;
+  readonly mergeSha?: string;
   readonly snapshot: WorkflowRunSnapshot;
 };
 
@@ -285,91 +285,16 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     now
   );
 
-  const checks = await input.github.readCheckSummary({
-    repo: input.event.repo,
-    pr,
-    headSha: reviewedHeadSha,
-    requiredChecks: input.policy.checks.required
-  });
-  const checkAggregation = aggregateChecks({
-    currentHeadSha: reviewedHeadSha,
-    requiredChecks: input.policy.checks.required,
-    skippedCountsAsSuccess: input.policy.checks.skipped_counts_as_success,
-    neutralCountsAsSuccess: input.policy.checks.neutral_counts_as_success,
-    checks: checks.checks.map((check) => ({ name: check.name, headSha: reviewedHeadSha, conclusion: check.conclusion }))
-  });
-  assertChecksSucceeded(checkAggregation);
-  transition(input.database, runId, WorkflowState.CiWaiting, WorkflowState.MergeReady, reviewedHeadSha, WorkflowEvent.ChecksSucceeded, now);
-
-  const mergeDecision = evaluateMergeGate({
+  return finishCiMergeAndCloseout(
+    input,
     runId,
-    issue: input.issue.number,
     pr,
-    currentHeadSha: reviewedHeadSha,
-    labels: input.issue.labels,
-    risk: implementation.risk,
-    allowedRisks: input.policy.merge.auto_merge.allowed_risks,
-    blockedLabels: input.policy.merge.auto_merge.blocked_labels,
-    planReviewCurrent: planReviewRun.result.verdict === "APPROVED",
-    prReviewHeadSha: prReviewOutcome.reviews[0]?.head_sha,
-    approvedPrReviewCount: prReviewOutcome.reviews.length,
-    requiredPrApprovals,
-    checksSucceeded: true,
-    githubMergeable: true,
-    mergeMethod: input.policy.merge.default_method,
+    reviewedHeadSha,
+    planReviewRun.result,
+    prReviewOutcome.reviews,
+    implementation,
     now
-  });
-  assertMergeAllowed(mergeDecision);
-  const merge = await input.github.mergePullRequest({
-    repo: input.event.repo,
-    pr,
-    expectedHeadSha: reviewedHeadSha,
-    method: mergeDecision.merge_method,
-    idempotencyKey: `${runId}:merge:pull-request`,
-    requestHash: createRequestHash({ runId, mergeDecision })
-  });
-  transition(input.database, runId, WorkflowState.MergeReady, WorkflowState.Merged, reviewedHeadSha, WorkflowEvent.MergeCompleted, now);
-
-  await input.github.deleteBranch({
-    repo: input.event.repo,
-    branch: implementation.branch,
-    afterMergeSha: merge.mergeSha,
-    idempotencyKey: `${runId}:merge:delete-branch`,
-    requestHash: createRequestHash({ runId, branch: implementation.branch, mergeSha: merge.mergeSha })
-  });
-  const finalSummary = renderFinalSummary({
-    runId,
-    issue: input.issue.number,
-    pr,
-    headSha: reviewedHeadSha,
-    mergeSha: merge.mergeSha,
-    tests: input.policy.checks.required.join(", "),
-    risk: implementation.risk
-  });
-  await input.github.createOrUpdateIssueComment({
-    repo: input.event.repo,
-    issue: input.issue.number,
-    body: finalSummary,
-    idempotencyKey: `${runId}:merge:final-summary`,
-    requestHash: createRequestHash({ runId, finalSummary })
-  });
-  await input.github.closeIssue({
-    repo: input.event.repo,
-    issue: input.issue.number,
-    idempotencyKey: `${runId}:merge:close-issue`,
-    requestHash: createRequestHash({ runId, issue: input.issue.number })
-  });
-  transition(input.database, runId, WorkflowState.Merged, WorkflowState.IssueClosed, reviewedHeadSha, WorkflowEvent.IssueCloseoutCompleted, now);
-
-  const snapshot = requireWorkflowRunSnapshot(input.database, runId, "closeout");
-  return {
-    runId,
-    issue: input.issue.number,
-    pr,
-    headSha: reviewedHeadSha,
-    mergeSha: merge.mergeSha,
-    snapshot
-  };
+  );
 }
 
 type PrReviewOutcome = {
@@ -1223,6 +1148,9 @@ export async function runIssueLifecycleFromStep(
   }
 
   if (startStep === "ci_waiting") {
+    if (input.event.head_sha && input.event.head_sha !== headSha) {
+      return waitingForChecksResult(input, runId, pr, headSha);
+    }
     safeTransition(input.database, runId, snapshot.run.state, WorkflowState.CiWaiting, headSha, "checks.pending", now);
     return finishCiMergeAndCloseout(
       input,
@@ -1299,14 +1227,94 @@ async function finishCiMergeAndCloseout(
     headSha,
     requiredChecks: input.policy.checks.required
   });
+  recordCompletedAction(
+    input.database,
+    runId,
+    "read_check_summary",
+    "pull_request",
+    String(pr),
+    checks.responseRef,
+    { runId, pr, headSha, checks },
+    now
+  );
   const checkAggregation = aggregateChecks({
     currentHeadSha: headSha,
     requiredChecks: input.policy.checks.required,
     skippedCountsAsSuccess: input.policy.checks.skipped_counts_as_success,
     neutralCountsAsSuccess: input.policy.checks.neutral_counts_as_success,
-    checks: checks.checks.map((check) => ({ name: check.name, headSha, conclusion: check.conclusion }))
+    checks: checks.checks.map((check) => ({ name: check.name, headSha: checks.headSha, conclusion: check.conclusion }))
   });
-  assertChecksSucceeded(checkAggregation);
+  if (checkAggregation.event === "checks.pending") {
+    return waitingForChecksResult(input, runId, pr, headSha);
+  }
+  if (checkAggregation.event === WorkflowEvent.ChecksFailed) {
+    const snapshot = getWorkflowRunSnapshot(input.database, { runId });
+    const fixDecision = decideFixLoop({
+      currentState: WorkflowState.CiWaiting,
+      currentFixRound: snapshot?.run.fix_round ?? 0,
+      maxFixRounds: input.policy.review.max_fix_rounds,
+      trigger: WorkflowEvent.ChecksFailed
+    });
+    if (fixDecision.nextState === WorkflowState.Failed) {
+      transitionToFailed(input.database, runId, snapshot?.run.state ?? WorkflowState.CiWaiting, headSha, now);
+      throw new OrchestratorError(ErrorCode.RetryExhausted, formatCheckFailureMessage(checkAggregation, "CI checks failed and fix rounds are exhausted"));
+    }
+    transitionWithFixRound(
+      input.database,
+      runId,
+      snapshot?.run.state ?? WorkflowState.CiWaiting,
+      WorkflowState.Fixing,
+      headSha,
+      headSha,
+      fixDecision.nextFixRound,
+      WorkflowEvent.ChecksFailed,
+      now
+    );
+    const nextHeadSha = await runImplementerFix({
+      input,
+      runId,
+      pr,
+      branch: implementation.branch,
+      headSha,
+      fixRound: fixDecision.nextFixRound,
+      implementation,
+      planCommentUrl: `ci-fix-${runId}`,
+      now
+    });
+    transitionWithFixRound(
+      input.database,
+      runId,
+      WorkflowState.Fixing,
+      WorkflowState.PrReviewing,
+      headSha,
+      nextHeadSha,
+      fixDecision.nextFixRound,
+      WorkflowEvent.AgentFixReady,
+      now
+    );
+    const requiredPrApprovals = input.policy.review.required_pr_approvals ?? (input.policy.review.require_pr_review ? 1 : 0);
+    const prReviewOutcome = await runRequiredPrReviews({
+      input,
+      runId,
+      pr,
+      headSha: nextHeadSha,
+      branch: implementation.branch,
+      implementation,
+      planCommentUrl: `ci-fix-${runId}`,
+      requiredPrApprovals,
+      now
+    });
+    safeTransition(
+      input.database,
+      runId,
+      WorkflowState.PrReviewing,
+      WorkflowState.CiWaiting,
+      prReviewOutcome.headSha,
+      WorkflowEvent.AgentPrReviewApproved,
+      now
+    );
+    return finishCiMergeAndCloseout(input, runId, pr, prReviewOutcome.headSha, planReview, prReviewOutcome.reviews, implementation, now);
+  }
   const beforeMerge = getWorkflowRunSnapshot(input.database, { runId });
   safeTransition(
     input.database,
@@ -1318,6 +1326,22 @@ async function finishCiMergeAndCloseout(
     now
   );
   return finishMergeAndCloseout(input, runId, pr, headSha, planReview, prReviews, implementation, now);
+}
+
+function waitingForChecksResult(
+  input: RunIssueLifecycleInput,
+  runId: string,
+  pr: number,
+  headSha: string
+): RunIssueLifecycleResult {
+  const snapshot = requireWorkflowRunSnapshot(input.database, runId, "resume");
+  return {
+    runId,
+    issue: input.issue.number,
+    pr,
+    headSha,
+    snapshot
+  };
 }
 
 async function finishMergeAndCloseout(
@@ -1424,13 +1448,7 @@ function throwPlanningStartError(reason: Extract<AdvanceWebhookEventResult, { re
   }
 }
 
-function assertChecksSucceeded(checkAggregation: CheckAggregationResult): void {
-  if (checkAggregation.event === WorkflowEvent.ChecksSucceeded) {
-    return;
-  }
-
-  const code =
-    checkAggregation.event === WorkflowEvent.ChecksFailed ? ErrorCode.ChecksFailed : ErrorCode.ChecksPending;
+function formatCheckFailureMessage(checkAggregation: CheckAggregationResult, prefix: string): string {
   const details = [
     checkAggregation.failed.length > 0
       ? `failed: ${checkAggregation.failed.map((check) => check.name).join(", ")}`
@@ -1439,10 +1457,7 @@ function assertChecksSucceeded(checkAggregation: CheckAggregationResult): void {
     checkAggregation.missing.length > 0 ? `missing: ${checkAggregation.missing.join(", ")}` : undefined
   ].filter((detail): detail is string => detail !== undefined);
 
-  throw new OrchestratorError(
-    code,
-    details.length > 0 ? `Required checks did not succeed (${details.join("; ")})` : "Required checks did not succeed"
-  );
+  return details.length > 0 ? `${prefix} (${details.join("; ")})` : prefix;
 }
 
 function assertMergeAllowed(mergeDecision: ReturnType<typeof evaluateMergeGate>): void {
