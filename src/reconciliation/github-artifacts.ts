@@ -253,7 +253,27 @@ function replayArtifactActions(
       now: input.now
     })
   );
-  return [...markerActions, ...prActions];
+  const closeIssueActions = input.artifacts.markers
+    .filter((marker) => marker.role === "merge_agent" && marker.verdict === "MERGED")
+    .map((marker) =>
+      recordIdempotentAction(database, {
+        idempotencyKey: `${input.runId}:reconcile:close-issue:${marker.issue}`,
+        runId: input.runId,
+        actionType: "close_issue",
+        targetType: "issue",
+        targetId: String(marker.issue),
+        requestHash: createRequestHash({
+          issue: marker.issue,
+          pr: marker.pr,
+          headSha: marker.headSha,
+          verdict: marker.verdict
+        }),
+        responseRef: `closed:${marker.issue}`,
+        status: "completed",
+        now: input.now
+      })
+    );
+  return [...markerActions, ...prActions, ...closeIssueActions];
 }
 
 function actionTypeForMarker(marker: ExistingMarker): string {
