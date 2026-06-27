@@ -81,6 +81,8 @@ When a current-head PR reviewer returns `REQUEST_CHANGES`:
 
 Labels are a user interface and recovery signal. SQLite CAS and idempotency records are still required for execution safety.
 
+On each user-visible workflow transition, the runtime must call `syncStateLabels()` and write the resulting label set to GitHub through the idempotent `setIssueLabels` adapter. State labels must remain mutually exclusive; entry, control, risk, and type labels must be preserved. Label writes use in-memory tracking after each successful sync so resume paths do not overwrite live GitHub labels from stale webhook snapshots.
+
 ## Retry Contract
 
 | Failure | Automatic Handling |
