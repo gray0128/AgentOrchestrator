@@ -116,7 +116,7 @@ export {
   attributionFromMetadata,
   renderAgentAttribution,
 } from "./orchestrator/agent-attribution.ts";
-export { runMockedEndToEndSmoke } from "./orchestrator/e2e-smoke.ts";
+export { runMockedDispatchSmoke, runMockedEndToEndSmoke } from "./orchestrator/e2e-smoke.ts";
 export { runIssueLifecycle, runIssueLifecycleFromStep } from "./orchestrator/runtime-lifecycle.ts";
 export { dispatchIssueWork, fallbackTriage } from "./orchestrator/issue-dispatch.ts";
 export { mapStateToNextStep, runTriage } from "./orchestrator/triage.ts";
@@ -152,6 +152,7 @@ export type {
 } from "./orchestrator/merge-gate.ts";
 export type { FinalSummaryInput } from "./orchestrator/closeout.ts";
 export type {
+  MockedDispatchSmokeInput,
   MockedEndToEndSmokeInput,
   MockedEndToEndSmokeResult,
 } from "./orchestrator/e2e-smoke.ts";
