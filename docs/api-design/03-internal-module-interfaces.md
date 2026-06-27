@@ -129,7 +129,8 @@ Rules:
 - PR review can require multiple independent approvals; `review.required_pr_approvals` takes that many executable `pr_reviewer` candidates from the default profile before merge evaluation.
 - `agent_routing.catalog` entries use the same process adapter shape as role-level `agents`.
 - Local CLIs that do not natively emit AgentOrchestrator JSON should be called through `tools/coding-agent-adapter.mjs`.
-- Issue-level routing commands may narrow behavior but cannot expand permissions.
+- Repository policy `routing.rules` is reserved for a future repo-level routing contract. MVP runtime ignores this field; active agent selection comes only from local `agent_routing`.
+- Issue-level routing commands may narrow behavior within locally configured profiles/candidates but cannot activate `repo-policy.routing.rules`, introduce unconfigured agents, expand permissions, or bypass gates.
 - `merge_agent` is builtin deterministic code for MVP.
 
 ## Agent Adapter

@@ -652,7 +652,7 @@ tools/coding-agent-adapter.mjs --provider reasonix
 tools/coding-agent-adapter.mjs --provider claude_code
 ```
 
-需要多 agent 优先级时，可在本机配置中添加 `agent_routing`。普通角色会选择第一个可执行候选；PR review 会根据 `review.required_pr_approvals` 从默认 profile 中取多个可执行 reviewer。
+需要多 agent 优先级时，可在本机配置中添加 `agent_routing`。普通角色会选择第一个可执行候选；PR review 会根据 `review.required_pr_approvals` 从默认 profile 中取多个可执行 reviewer。仓库策略文件中的 `routing.rules` 是保留字段，MVP 不会执行；需要生效的路由必须写在本机 `config/local.json` 的 `agent_routing` 中。
 
 默认情况下，agent 子进程不会继承完整宿主环境。Orchestrator 只传递最小运行时变量（如 `PATH`、`HOME`、`TMPDIR` 等）以及 `agent_env.allowlist` 中显式列出的 key。GitHub App 凭据、webhook secret、NPM/Docker/AWS token 等不会进入 agent 进程。若你从旧版本迁移且 agent 依赖额外环境变量，请把它们加入 `agent_env.allowlist`；仅在过渡期可使用 `agent_env.mode = "legacy_blacklist"`。
 
