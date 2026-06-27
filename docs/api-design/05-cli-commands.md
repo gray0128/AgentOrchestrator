@@ -63,6 +63,8 @@ Verification:
 - `GET /healthz` returns service health when local TCP bind is available.
 - `POST /webhook` returns `WEBHOOK_SECRET_MISSING` until `AGENT_ORCHESTRATOR_WEBHOOK_SECRET` is set.
 - With a webhook secret, `POST /webhook` verifies signatures, deduplicates delivery ids, parses JSON, and normalizes supported domain events.
+- Invalid signatures return `401` with `WEBHOOK_SIGNATURE_INVALID`.
+- Duplicate deliveries and unsupported events return `202`; unsupported events finalize delivery status as `ignored`.
 - Starts without GitHub token in logs.
 - Rejects invalid config schema.
 - In `--github-mode live`, fails fast when GitHub App environment variable references are missing or resolve to empty values.
