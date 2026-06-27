@@ -717,21 +717,29 @@ const STATE_LABELS = [
 
 ### 9.1 Webhook Events
 
-必须处理：
+GitHub webhook 订阅面与 `normalizeGitHubWebhook()` 产出的 `DomainEventType` 对齐如下。
 
-- `issues.opened`
-- `issues.labeled`
-- `issues.unlabeled`
-- `issue_comment.created`
-- `pull_request.opened`
-- `pull_request.synchronize`
-- `pull_request.reopened`
-- `pull_request_review.submitted`
-- `check_run.completed`
-- `status`
-- `workflow_run.completed`
+| GitHub webhook | 归一化结果 | 说明 |
+| --- | --- | --- |
+| `issues.opened`（Issue 已带 `agent:autopilot`） | `issue.autopilot_requested` | 与 `issues.labeled agent:autopilot` 等价入口 |
+| `issues.labeled` | `issue.autopilot_requested` / `control.pause` / `control.no_merge` | 按 label 名映射 |
+| `issues.unlabeled` | `control.resume` / `control.autopilot_removed` | `agent:pause` 恢复；移除 `agent:autopilot` 停止后续推进 |
+| `issue_comment.created` | `issue.comment_dispatch_requested` | 需 mention trigger 且 Issue 有 autopilot |
+| `pull_request.synchronize` | `pull_request.synchronized` | 记录当前 head sha |
+| `pull_request_review.submitted` | `agent.pr_review_approved` / `agent.pr_review_changes_requested` | 外部 review；`commented` / `dismissed` 忽略 |
+| `pull_request_review_comment.created` | `issue.comment_dispatch_requested` | mention dispatch |
+| `check_run.completed`（及非 completed） | `checks.succeeded` / `checks.failed` / `checks.pending` | 绑定 payload head sha |
+| `status` | `checks.succeeded` / `checks.failed` / `checks.pending` | 补充信号；常无 PR number，由 reconciliation 按 sha 关联 |
+| `workflow_run.completed`（及非 completed） | `checks.succeeded` / `checks.failed` / `checks.pending` | 补充信号；最终以 PR 当前 head 的 check runs 为准 |
 
-可选处理：
+MVP 不直接归一化、由替代机制覆盖：
+
+| GitHub webhook | 替代机制 |
+| --- | --- |
+| `pull_request.opened` / `pull_request.reopened` | Implementer 阶段创建 PR 后 lifecycle 绑定；reconciliation 读取 PR artifact |
+| `repository_ruleset` / `branch_protection_rule` | merge gate 前读取 PR `mergeable` / ruleset evidence；reconciliation 修复 |
+
+可选处理（仍不在 MVP 直接 webhook 映射）：
 
 - `repository_ruleset`
 - `branch_protection_rule`

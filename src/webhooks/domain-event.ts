@@ -5,7 +5,11 @@ export const DomainEventType = {
   IssueCommentDispatchRequested: "issue.comment_dispatch_requested",
   ControlPause: "control.pause",
   ControlResume: "control.resume",
+  ControlAutopilotRemoved: "control.autopilot_removed",
   ControlNoMerge: "control.no_merge",
+  AgentPrReviewApproved: "agent.pr_review_approved",
+  AgentPrReviewChangesRequested: "agent.pr_review_changes_requested",
+  AgentPrReviewBlocked: "agent.pr_review_blocked",
   PullRequestSynchronized: "pull_request.synchronized",
   ChecksSucceeded: "checks.succeeded",
   ChecksFailed: "checks.failed",
@@ -67,6 +71,9 @@ type GitHubWebhookPayload = {
     readonly head_sha?: string;
     readonly pull_requests?: readonly { readonly number?: number }[];
   };
+  readonly review?: { readonly state?: string };
+  readonly sha?: string;
+  readonly state?: string;
   readonly sender?: { readonly login?: string };
 };
 
@@ -101,8 +108,16 @@ export function normalizeGitHubWebhook(input: NormalizeGitHubWebhookInput): Doma
     return normalizePullRequestEvent(input.payload, base);
   }
 
+  if (input.eventName === "pull_request_review") {
+    return normalizePullRequestReviewEvent(input.payload, base);
+  }
+
   if (input.eventName === "check_run") {
     return normalizeCheckRunEvent(input.payload, base);
+  }
+
+  if (input.eventName === "status") {
+    return normalizeStatusEvent(input.payload, base);
   }
 
   if (input.eventName === "workflow_run") {
@@ -125,11 +140,17 @@ function normalizeIssueEvent(
   if (payload.action === "labeled" && label === "agent:autopilot") {
     return { ...base, event_type: DomainEventType.IssueAutopilotRequested, issue };
   }
+  if (payload.action === "opened" && issueHasAutopilotLabel(payload.issue)) {
+    return { ...base, event_type: DomainEventType.IssueAutopilotRequested, issue };
+  }
   if (payload.action === "labeled" && label === "agent:pause") {
     return { ...base, event_type: DomainEventType.ControlPause, issue };
   }
   if (payload.action === "unlabeled" && label === "agent:pause") {
     return { ...base, event_type: DomainEventType.ControlResume, issue };
+  }
+  if (payload.action === "unlabeled" && label === "agent:autopilot") {
+    return { ...base, event_type: DomainEventType.ControlAutopilotRemoved, issue };
   }
   if (payload.action === "labeled" && label === "agent:no-merge") {
     return { ...base, event_type: DomainEventType.ControlNoMerge, issue };
@@ -221,6 +242,42 @@ export function mentionsDispatchTrigger(body: string, triggers: readonly string[
 
 const defaultMentionTriggers = ["agentorchestratorifify"];
 
+function normalizePullRequestReviewEvent(
+  payload: GitHubWebhookPayload,
+  base: Omit<DomainEvent, "event_type">
+): DomainEvent | undefined {
+  if (payload.action !== "submitted") {
+    return undefined;
+  }
+
+  const pr = payload.pull_request?.number;
+  const headSha = payload.pull_request?.head?.sha;
+  if (!pr || !headSha) {
+    return undefined;
+  }
+
+  const linkedIssue = resolveLinkedIssueNumber({
+    body: payload.pull_request?.body,
+    headRef: payload.pull_request?.head?.ref
+  });
+  if (!linkedIssue) {
+    return undefined;
+  }
+
+  const eventType = prReviewEventType(payload.review?.state);
+  if (!eventType) {
+    return undefined;
+  }
+
+  return {
+    ...base,
+    event_type: eventType,
+    issue: linkedIssue,
+    pr,
+    head_sha: headSha
+  };
+}
+
 function normalizePullRequestEvent(
   payload: GitHubWebhookPayload,
   base: Omit<DomainEvent, "event_type">
@@ -282,12 +339,52 @@ function normalizeWorkflowRunEvent(
   };
 }
 
+function normalizeStatusEvent(
+  payload: GitHubWebhookPayload,
+  base: Omit<DomainEvent, "event_type">
+): DomainEvent | undefined {
+  const headSha = payload.sha;
+  if (!headSha) {
+    return undefined;
+  }
+
+  return {
+    ...base,
+    event_type: statusEventType(payload.state),
+    head_sha: headSha
+  };
+}
+
 function checkRunEventType(action: string | undefined, conclusion: string | null | undefined): DomainEventType {
   if (action !== "completed") {
     return DomainEventType.ChecksPending;
   }
 
   return conclusion === "success" ? DomainEventType.ChecksSucceeded : DomainEventType.ChecksFailed;
+}
+
+function statusEventType(state: string | undefined): DomainEventType {
+  if (state === "success") {
+    return DomainEventType.ChecksSucceeded;
+  }
+  if (state === "failure" || state === "error") {
+    return DomainEventType.ChecksFailed;
+  }
+  return DomainEventType.ChecksPending;
+}
+
+function prReviewEventType(state: string | undefined): DomainEventType | undefined {
+  const normalized = state?.toLowerCase();
+  if (normalized === "approved") {
+    return DomainEventType.AgentPrReviewApproved;
+  }
+  if (normalized === "changes_requested") {
+    return DomainEventType.AgentPrReviewChangesRequested;
+  }
+  if (normalized === "dismissed" || normalized === "commented") {
+    return undefined;
+  }
+  return undefined;
 }
 
 function extractRepo(payload: GitHubWebhookPayload): DomainEvent["repo"] | undefined {
