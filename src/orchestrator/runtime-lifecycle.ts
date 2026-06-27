@@ -17,6 +17,14 @@ import { createRequestHash } from "../github/request-hash.ts";
 import { evaluatePathPolicy, resolvePathPolicyBlock } from "../policy/path-policy.ts";
 import type { PathPolicyBlock } from "../policy/path-policy.ts";
 import {
+  collectDispatchUntrustedText,
+  collectImplementationOutputText,
+  collectPlanOutputText,
+  evaluatePromptInjectionPolicy,
+  resolvePromptInjectionBlock
+} from "../policy/prompt-injection.ts";
+import type { PromptInjectionBlock } from "../policy/prompt-injection.ts";
+import {
   casUpdateRunState,
   getWorkflowRunSnapshot,
   recordIdempotentAction,
@@ -142,7 +150,33 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
   });
   await syncWorkflowStateLabels(labelSync, WorkflowState.Planning, "start:planning");
 
-  const planRun = await runAgent(input.agents.planner, plannerEnvelope(input, runId, now), "Create a low-risk plan.", input.sourceRepoPath);
+  await guardPromptInjection(
+    input,
+    runId,
+    collectDispatchUntrustedText(input.issue),
+    WorkflowState.Planning,
+    null,
+    now
+  );
+  const planRun = await runAgentWithInjectionGate(
+    input,
+    runId,
+    WorkflowState.Planning,
+    null,
+    now,
+    input.agents.planner,
+    plannerEnvelope(input, runId, now),
+    "Create a low-risk plan.",
+    input.sourceRepoPath
+  );
+  await guardPromptInjection(
+    input,
+    runId,
+    collectPlanOutputText(planRun.result),
+    WorkflowState.Planning,
+    null,
+    now
+  );
   const planComment = renderPlanComment(planRun.result, attributionFromMetadata(planRun.metadata, AgentRole.Planner));
   const planCommentResult = await input.github.createOrUpdateIssueComment({
     repo: input.event.repo,
@@ -157,7 +191,12 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
   }, now);
   await transition(input.database, runId, WorkflowState.Planning, WorkflowState.PlanReviewing, null, WorkflowEvent.AgentPlanSubmitted, now, labelSync);
 
-  const planReviewRun = await runAgent(
+  const planReviewRun = await runAgentWithInjectionGate(
+    input,
+    runId,
+    WorkflowState.PlanReviewing,
+    null,
+    now,
     input.agents.planReviewer,
     planReviewerEnvelope(input, runId, planRun.result, planCommentResult.responseRef, now),
     "Review the plan.",
@@ -197,13 +236,26 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     baseBranch: input.repo.default_branch
   });
 
-  const implementationRun = await runAgent(
+  const implementationRun = await runAgentWithInjectionGate(
+    input,
+    runId,
+    WorkflowState.Implementing,
+    null,
+    now,
     input.agents.implementer,
     implementerEnvelope(input, runId, planRun.result, planCommentResult.responseRef, preparedWorkspace, now),
     "Implement the approved plan.",
     preparedWorkspace.path
   );
   const implementationProposal = implementationRun.result;
+  await guardPromptInjection(
+    input,
+    runId,
+    collectImplementationOutputText(implementationProposal),
+    WorkflowState.Implementing,
+    null,
+    now
+  );
   const diffEvidence = collectWorkspaceDiffEvidence(preparedWorkspace.path, implementationProposal.changed_files);
   const pathPolicyDecision = evaluatePathPolicy({
     changedFiles: diffEvidence.changedFiles,
@@ -442,7 +494,12 @@ async function runRequiredPrReviews(input: {
     const approved: ReviewerVerdict[] = [];
     let restarted = false;
     for (const [index, reviewer] of requiredReviewers.entries()) {
-      const prReviewRun = await runAgent(
+      const prReviewRun = await runAgentWithInjectionGate(
+        input.input,
+        input.runId,
+        WorkflowState.PrReviewing,
+        currentHeadSha,
+        input.now,
         reviewer,
         prReviewerEnvelope(input.input, input.runId, input.pr, currentHeadSha, input.branch, input.now),
         `Review the PR independently as reviewer ${index + 1}.`,
@@ -624,13 +681,26 @@ async function runImplementerFix(input: {
     branch: input.branch,
     headSha: input.headSha
   });
-  const fixRun = await runAgent(
+  const fixRun = await runAgentWithInjectionGate(
+    input.input,
+    input.runId,
+    WorkflowState.Fixing,
+    input.headSha,
+    input.now,
     input.input.agents.implementer,
     fixerEnvelope(input.input, input.runId, input.pr, preparedWorkspace, input.now),
     `Apply fix round ${input.fixRound} for review feedback.`,
     preparedWorkspace.path
   );
   const fixProposal = fixRun.result;
+  await guardPromptInjection(
+    input.input,
+    input.runId,
+    collectImplementationOutputText(fixProposal),
+    WorkflowState.Fixing,
+    input.headSha,
+    input.now
+  );
   const diffEvidence = collectWorkspaceDiffEvidence(preparedWorkspace.path, fixProposal.changed_files);
   const pathPolicyDecision = evaluatePathPolicy({
     changedFiles: diffEvidence.changedFiles,
@@ -857,6 +927,42 @@ async function runAgent<Role extends AgentRole>(
   };
 }
 
+async function runAgentWithInjectionGate<Role extends AgentRole>(
+  input: RunIssueLifecycleInput,
+  runId: string,
+  currentState: string,
+  headSha: string | null,
+  now: Date,
+  adapter: AgentAdapter<Role>,
+  envelope: TaskEnvelope,
+  prompt: string,
+  workspacePath: string
+): Promise<AgentRunOutput<Role>> {
+  await guardPromptInjection(
+    input,
+    runId,
+    [collectDispatchUntrustedText(input.issue), prompt].join("\n"),
+    currentState,
+    headSha,
+    now
+  );
+  return runAgent(adapter, envelope, prompt, workspacePath);
+}
+
+async function guardPromptInjection(
+  input: RunIssueLifecycleInput,
+  runId: string,
+  text: string,
+  currentState: string,
+  headSha: string | null,
+  now: Date
+): Promise<void> {
+  const block = resolvePromptInjectionBlock(evaluatePromptInjectionPolicy(text));
+  if (block) {
+    await blockRunForPromptInjection(input, runId, block, currentState, headSha, now);
+  }
+}
+
 function plannerEnvelope(input: RunIssueLifecycleInput, runId: string, now: Date): TaskEnvelope {
   return baseEnvelope(input, runId, AgentRole.Planner, { plan: true }, now);
 }
@@ -1051,6 +1157,68 @@ async function blockRunForMissingResumeArtifacts(
     now
   );
   throw new OrchestratorError(ErrorCode.WorkflowArtifactMissing, explanation);
+}
+
+export async function blockRunForPromptInjection(
+  input: RunIssueLifecycleInput,
+  runId: string,
+  block: PromptInjectionBlock,
+  currentState: string,
+  headSha: string | null,
+  now: Date
+): Promise<never> {
+  const blocked = buildBlockedHandling({
+    currentLabels: input.issue.labels,
+    runId,
+    issue: input.issue.number,
+    errorCode: block.errorCode,
+    explanation: block.explanation,
+    requiredAction: block.requiredAction
+  });
+  await transition(
+    input.database,
+    runId,
+    currentState,
+    WorkflowState.Blocked,
+    headSha,
+    WorkflowEvent.PolicyBlock,
+    now
+  );
+  const blockedCommentResult = await input.github.createOrUpdateIssueComment({
+    repo: input.event.repo,
+    issue: input.issue.number,
+    body: blocked.comment,
+    idempotencyKey: `${runId}:prompt-injection:block-comment`,
+    requestHash: createRequestHash({ runId, comment: blocked.comment })
+  });
+  recordCompletedAction(
+    input.database,
+    runId,
+    "create_issue_comment",
+    "issue",
+    String(input.issue.number),
+    blockedCommentResult.responseRef,
+    { runId, blockedComment: blocked.comment },
+    now
+  );
+  const labelsResult = await input.github.setIssueLabels({
+    repo: input.event.repo,
+    issue: input.issue.number,
+    labels: [...blocked.labels],
+    idempotencyKey: `${runId}:prompt-injection:block-labels`,
+    requestHash: createRequestHash({ runId, labels: blocked.labels })
+  });
+  recordCompletedAction(
+    input.database,
+    runId,
+    "set_issue_labels",
+    "issue",
+    String(input.issue.number),
+    labelsResult.responseRef,
+    { runId, labels: blocked.labels },
+    now
+  );
+  throw new OrchestratorError(ErrorCode.PromptInjectionPolicyViolation, block.explanation);
 }
 
 async function blockRunForPathPolicy(

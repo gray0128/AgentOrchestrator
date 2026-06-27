@@ -190,6 +190,19 @@ export {
   resolvePathPolicyBlock,
 } from "./policy/path-policy.ts";
 export {
+  collectDispatchUntrustedText,
+  collectImplementationOutputText,
+  collectPlanOutputText,
+  evaluatePromptInjectionPolicy,
+  resolvePromptInjectionBlock,
+} from "./policy/prompt-injection.ts";
+export type {
+  PromptInjectionBlock,
+  PromptInjectionDecision,
+  PromptInjectionMatch,
+  PromptInjectionViolationCategory,
+} from "./policy/prompt-injection.ts";
+export {
   loadRepoPolicy,
   resolveRepoPolicyPath,
 } from "./policy/repo-policy-loader.ts";

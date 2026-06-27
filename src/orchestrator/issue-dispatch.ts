@@ -17,7 +17,12 @@ import { WorkflowState } from "../state/state-machine.ts";
 import { DomainEventType } from "../webhooks/domain-event.ts";
 import type { DomainEvent } from "../webhooks/domain-event.ts";
 import { advanceWebhookEvent, createIssueRunId } from "./webhook-runtime.ts";
-import { runIssueLifecycle, runIssueLifecycleFromStep } from "./runtime-lifecycle.ts";
+import {
+  collectDispatchUntrustedText,
+  evaluatePromptInjectionPolicy,
+  resolvePromptInjectionBlock
+} from "../policy/prompt-injection.ts";
+import { blockRunForPromptInjection, runIssueLifecycle, runIssueLifecycleFromStep } from "./runtime-lifecycle.ts";
 import type { RunIssueLifecycleInput, RunIssueLifecycleResult, RuntimeLifecycleAgents } from "./runtime-lifecycle.ts";
 import { fallbackTriage, mapStateToNextStep, runTriage } from "./triage.ts";
 import type { TriageDecision, TriageInput } from "./triage.ts";
@@ -46,6 +51,31 @@ export async function dispatchIssueWork(input: DispatchIssueWorkInput): Promise<
   const now = input.now ?? new Date();
   const runId = await ensureRunExists(input, now);
   const snapshot = getWorkflowRunSnapshot(input.database, { runId });
+  const promptInjectionBlock = resolvePromptInjectionBlock(
+    evaluatePromptInjectionPolicy(collectDispatchUntrustedText(input.issue, input.triggerComment))
+  );
+  if (promptInjectionBlock) {
+    try {
+      await blockRunForPromptInjection(
+        input,
+        runId,
+        promptInjectionBlock,
+        snapshot?.run.state ?? WorkflowState.New,
+        snapshot?.run.head_sha ?? null,
+        now
+      );
+    } catch (error) {
+      if (error instanceof OrchestratorError) {
+        recordRunLastError(input.database, {
+          runId,
+          errorCode: error.code,
+          errorMessage: boundMarkdown({ value: error.message }),
+          now
+        });
+      }
+      throw error;
+    }
+  }
   const triageRun = await runTriage({
     runId,
     repo: input.repo,
