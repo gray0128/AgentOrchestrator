@@ -23,21 +23,29 @@ Failure:
 - Unsupported event: `202`, delivery status `ignored`.
 - Duplicate delivery: `202`, delivery status `ignored`.
 
-## Control Commands
+## Control Surface (MVP)
 
-Supported Issue comments:
+MVP workflow control is label-based. Issue comments do not parse `/agent ...` slash commands.
 
-- `/agent pause`
-- `/agent resume`
-- `/agent retry`
-- `/agent no-merge`
-- `/agent use implementer=<id> reviewer=<id>`
+Supported GitHub Issue labels:
+
+| Label | Effect |
+| --- | --- |
+| `agent:pause` | Pause automation (`control.pause`). Remove to resume (`control.resume`). |
+| `agent:no-merge` | Block merge even when other gates pass (`control.no_merge`). |
+| `agent:autopilot` | Start or keep automation eligible. Removing stops future dispatch (`control.autopilot_removed`). |
+| `needs-human` | Human intervention required; blocks autonomous recovery. |
 
 Rules:
 
-- Commands are accepted only from allowed actors.
-- Commands can pause or narrow automation.
-- Commands cannot bypass policy, CI, review, rulesets, high-risk blocks, or token isolation.
+- Autopilot start and `@mention` dispatch are accepted only from `autopilot.allowed_actors` when configured.
+- Control label webhooks are also actor-gated when `autopilot.allowed_actors` is configured.
+- Direct label edits still require GitHub issue label write permission.
+- Labels can pause or narrow automation but cannot bypass policy, CI, review, rulesets, high-risk blocks, or token isolation.
+
+Deferred post-MVP:
+
+- `/agent pause|resume|retry|no-merge|use ...` comment commands.
 
 ## GitHub Write Actions
 

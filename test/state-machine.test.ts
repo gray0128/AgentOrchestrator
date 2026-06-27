@@ -106,7 +106,7 @@ const contractTransitions: readonly Transition[] = [
     from: "any_nonterminal",
     event: WorkflowEvent.ControlPause,
     to: WorkflowState.Paused,
-    guard: "agent:pause appears or /agent pause."
+    guard: "agent:pause label appears."
   },
   {
     from: WorkflowState.Paused,

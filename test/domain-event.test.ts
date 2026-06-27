@@ -244,6 +244,33 @@ test("deferred pull_request opened and reopened webhooks are ignored", () => {
   }
 });
 
+test("issue_comment slash control commands are not parsed in MVP", () => {
+  for (const body of [
+    "/agent pause",
+    "/agent resume",
+    "/agent retry",
+    "/agent no-merge",
+    "Please /agent pause this issue"
+  ]) {
+    const event = normalizeGitHubWebhook({
+      eventName: "issue_comment",
+      deliveryId: `delivery-slash-${body}`,
+      receivedAt,
+      payload: {
+        action: "created",
+        repository: repo(),
+        issue: {
+          number: 123,
+          labels: [{ name: "agent:autopilot" }]
+        },
+        comment: { body },
+        sender: { login: "alice" }
+      }
+    });
+    assert.equal(event, undefined, `expected slash comment to be ignored: ${body}`);
+  }
+});
+
 test("unsupported webhook events are ignored", () => {
   const event = normalizeGitHubWebhook({
     eventName: "star",

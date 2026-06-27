@@ -132,7 +132,7 @@ export {
   advanceWebhookEvent,
   createIssueRunId,
 } from "./orchestrator/webhook-runtime.ts";
-export { shouldDiscardActor, isActorAllowed } from "./policy/actor-gate.ts";
+export { shouldDiscardActor, isActorAllowed, isActorGatedDomainEvent } from "./policy/actor-gate.ts";
 export { resolveLinkedIssueNumber, isPullRequestIssue } from "./webhooks/comment-dispatch.ts";
 export { issueHasAutopilotLabel, mentionsDispatchTrigger } from "./webhooks/domain-event.ts";
 export {

@@ -38,7 +38,7 @@
 | `fixing` | `agent.fix_ready` | `pr_reviewing` | New commit pushed; old review and CI conclusions invalidated. |
 | `merge_ready` | `merge.completed` | `merged` | GitHub merge API accepted current head sha. |
 | `merged` | `issue.closeout_completed` | `issue_closed` | Final comment written and Issue closed. |
-| Any nonterminal | `control.pause` | `paused` | `agent:pause` appears or `/agent pause`. |
+| Any nonterminal | `control.pause` | `paused` | `agent:pause` label appears. |
 | `paused` | `control.resume` | Previous recoverable state | Policy recomputed and labels allow work. |
 | Any nonterminal | `policy.block` | `blocked` | Deny path, high risk, permission failure, stale unrecoverable state. |
 | `blocked` | `control.resume` | Reconciled state | Human removed blocker and policy recomputed cleanly. |
@@ -76,6 +76,7 @@ When a current-head PR reviewer returns `REQUEST_CHANGES`:
 - Entry label: `agent:autopilot`.
 - State labels are mutually exclusive: `agent:planning`, `agent:plan-review`, `agent:implementing`, `agent:pr-review`, `agent:fixing`, `agent:merge-ready`, `agent:done`, `agent:blocked`.
 - Control labels: `agent:pause`, `agent:no-merge`, `needs-human`.
+- MVP does not parse `/agent ...` slash commands in Issue comments; operators use the control labels above.
 - Risk labels: `risk:low`, `risk:medium`, `risk:high`.
 - Type labels: `type:bug`, `type:feature`, `type:docs`, `type:refactor`.
 
