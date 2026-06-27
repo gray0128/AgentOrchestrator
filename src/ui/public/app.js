@@ -313,11 +313,18 @@ async function loadRunDetail() {
     }
 
     $("run-meta").innerHTML = `
-      <div>run_id: <span class="mono">${run.run_id}</span></div>
-      <div>lease: <span class="mono">${run.lease_owner ?? "—"}</span> / ${formatTime(run.lease_expires_at)}</div>
-      <div>错误: ${run.last_error_code ?? "—"} ${run.last_error_message ?? ""}</div>
-      <div>创建: ${formatTime(run.created_at)} · 更新: ${formatTime(run.updated_at)}</div>
+      <div>run_id: <span class="mono" id="run-meta-id"></span></div>
+      <div>lease: <span class="mono" id="run-meta-lease"></span> / <span id="run-meta-lease-exp"></span></div>
+      <div>错误: <span id="run-meta-err-code"></span> <span id="run-meta-err-msg"></span></div>
+      <div>创建: <span id="run-meta-created"></span> · 更新: <span id="run-meta-updated"></span></div>
     `;
+    $("run-meta-id").textContent = run.run_id;
+    $("run-meta-lease").textContent = run.lease_owner ?? "—";
+    $("run-meta-lease-exp").textContent = formatTime(run.lease_expires_at);
+    $("run-meta-err-code").textContent = run.last_error_code ?? "—";
+    $("run-meta-err-msg").textContent = run.last_error_message ?? "";
+    $("run-meta-created").textContent = formatTime(run.created_at);
+    $("run-meta-updated").textContent = formatTime(run.updated_at);
 
     const timeline = detail.snapshot.transitions;
     $("timeline").innerHTML =

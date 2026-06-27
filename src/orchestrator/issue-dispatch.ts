@@ -2,7 +2,7 @@ import { AgentRole } from "../agents/adapter.ts";
 import type { AgentAdapter } from "../agents/adapter.ts";
 import { OrchestratorError } from "../errors.ts";
 import { createRequestHash } from "../github/request-hash.ts";
-import { sanitizeMarkdown } from "../security/redaction.ts";
+import { boundMarkdown } from "../security/redaction.ts";
 import type { GitHubApiAdapter } from "../github/api.ts";
 import { renderAgentMarker } from "../github/markers.ts";
 import { appendAgentSubmissionFooter, type AgentAttribution } from "./agent-attribution.ts";
@@ -117,7 +117,7 @@ export async function dispatchIssueWork(input: DispatchIssueWorkInput): Promise<
       recordRunLastError(input.database, {
         runId,
         errorCode: error.code,
-        errorMessage: sanitizeMarkdown(error.message),
+        errorMessage: boundMarkdown({ value: error.message }),
         now
       });
     }
