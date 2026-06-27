@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "autopilot": {
+    "enabled": true,
+    "trigger_labels": ["agent:autopilot"],
+    "allowed_actors": ["your-github-username"]
+  },
+  "merge": {
+    "default_method": "squash",
+    "auto_merge": {
+      "enabled": false,
+      "allowed_risks": ["low"],
+      "blocked_labels": [
+        "agent:no-merge",
+        "needs-human",
+        "risk:high",
+        "risk:medium",
+        "do-not-merge"
+      ]
+    }
+  },
+  "paths": {
+    "allow": ["docs/**"],
+    "deny": [
+      ".github/**",
+      "src/**",
+      "test/**",
+      "package.json",
+      "package-lock.json",
+      "Dockerfile",
+      "**/*.yml",
+      "**/*.yaml"
+    ],
+    "high_risk": [
+      "package-lock.json",
+      "package.json",
+      "Dockerfile",
+      ".github/**"
+    ]
+  },
+  "checks": {
+    "required": ["ci"],
+    "source": "branch_protection_read",
+    "skipped_counts_as_success": false,
+    "neutral_counts_as_success": false
+  },
+  "review": {
+    "max_fix_rounds": 2,
+    "require_plan_review": true,
+    "require_pr_review": true,
+    "required_pr_approvals": 2,
+    "agent_review_counts_as_human_review": false
+  }
+}

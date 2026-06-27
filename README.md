@@ -98,6 +98,7 @@ AgentOrchestrator 有两层配置：
 | 本机 CLI 配置 | `config/local.json`，也可由 `AGENT_ORCHESTRATOR_CONFIG` 指向其他路径 | AgentOrchestrator 本仓库或运行机器 | 描述 GitHub App 凭据环境变量名、SQLite 路径、工作区路径、要管理的仓库和 agent 命令 |
 | 本机示例配置 | `config/local.example.json` | AgentOrchestrator 本仓库 | 提供可提交的配置结构示例，不放真实仓库和密钥 |
 | 目标仓库策略配置 | 默认 `.github/agent-orchestrator.json`，可在本机配置的 `repositories[].policy_file` 中改名 | 被自动处理的目标仓库 | 描述哪些 Issue 可自动处理、可写路径、禁止路径、required checks、review 和 auto-merge 规则 |
+| 目标仓库策略示例 | `examples/agent-orchestrator.low-risk.json`、`examples/agent-orchestrator.production-strict.json` | AgentOrchestrator 本仓库 | 提供可复制到目标仓库的策略模板，通过 schema 校验 |
 | 环境变量文件 | `.env` 或 shell 环境；仓库只提交 `.env.example` | 运行机器 | 存放真实 GitHub App 凭据、webhook secret、本机配置路径 |
 
 真实密钥不要写入 Git。`config/local.json` 和 `.env` 都应视为机器本地文件。
@@ -285,47 +286,25 @@ docs/contracts/schemas/local-config.schema.json
 
 ### 配置内容
 
-目标仓库中创建：
+目标仓库中创建策略文件。推荐从本仓库示例复制：
 
 ```sh
-mkdir -p .github
-$EDITOR .github/agent-orchestrator.json
+mkdir -p /absolute/path/to/target-repo/.github
+cp examples/agent-orchestrator.low-risk.json /absolute/path/to/target-repo/.github/agent-orchestrator.json
 ```
 
-最小可用示例：
+也可按场景选择：
 
-```json
-{
-  "version": 1,
-  "autopilot": {
-    "enabled": true,
-    "trigger_labels": ["agent:autopilot"]
-  },
-  "merge": {
-    "default_method": "squash",
-    "auto_merge": {
-      "enabled": true,
-      "allowed_risks": ["low"],
-      "blocked_labels": ["agent:no-merge", "needs-human", "risk:high"]
-    }
-  },
-  "paths": {
-    "allow": ["src/**", "test/**", "docs/**"],
-    "deny": [".github/**"],
-    "high_risk": ["package-lock.json"]
-  },
-  "checks": {
-    "required": ["npm run check"],
-    "source": "policy_required_names"
-  },
-  "review": {
-    "max_fix_rounds": 3,
-    "require_plan_review": true,
-    "require_pr_review": true,
-    "required_pr_approvals": 1,
-    "agent_review_counts_as_human_review": false
-  }
-}
+| 示例 | 路径 | 适用场景 |
+| --- | --- | --- |
+| 低风险 docs-only | `examples/agent-orchestrator.low-risk.json` | 仅允许 `docs/**` 变更，低风险可自动合并 |
+| 生产严格 | `examples/agent-orchestrator.production-strict.json` | 限制触发 actor、关闭 auto-merge、读取 branch protection checks、提高 PR 审核门槛 |
+
+复制后按需调整 `allowed_actors`、`checks.required` 和路径 glob：
+
+```sh
+cp examples/agent-orchestrator.production-strict.json /absolute/path/to/target-repo/.github/agent-orchestrator.json
+$EDITOR /absolute/path/to/target-repo/.github/agent-orchestrator.json
 ```
 
 关键字段说明：
