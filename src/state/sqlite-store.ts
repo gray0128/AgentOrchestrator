@@ -94,6 +94,12 @@ export type WorkflowRunLookup =
       readonly issueNumber: number;
     };
 
+export type WorkflowRunPullRequestLookup = {
+  readonly repoOwner: string;
+  readonly repoName: string;
+  readonly prNumber: number;
+};
+
 export type WorkflowRunSnapshot = {
   readonly run: {
     readonly run_id: string;
@@ -159,6 +165,25 @@ export function getWorkflowRunSnapshot(
     return undefined;
   }
 
+  return buildWorkflowRunSnapshot(database, run);
+}
+
+export function getWorkflowRunSnapshotByPullRequest(
+  database: StateDatabase,
+  lookup: WorkflowRunPullRequestLookup
+): WorkflowRunSnapshot | undefined {
+  const run = database
+    .prepare(selectWorkflowRunSql("repo_owner = ? AND repo_name = ? AND pr_number = ?"))
+    .get(lookup.repoOwner, lookup.repoName, lookup.prNumber) as WorkflowRunSnapshot["run"] | undefined;
+
+  if (!run) {
+    return undefined;
+  }
+
+  return buildWorkflowRunSnapshot(database, run);
+}
+
+function buildWorkflowRunSnapshot(database: StateDatabase, run: WorkflowRunSnapshot["run"]): WorkflowRunSnapshot {
   const transitions = database
     .prepare(
       `
