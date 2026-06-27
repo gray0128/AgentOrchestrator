@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
@@ -207,6 +209,17 @@ test("repo policy validates required PR approval count bounds", () => {
 
   assert.equal(invalid.ok, false);
   assert.ok(invalid.errors.some((error) => error.includes("review.required_pr_approvals")));
+});
+
+test("repository policy examples validate against schema", () => {
+  for (const file of [
+    "agent-orchestrator.low-risk.json",
+    "agent-orchestrator.production-strict.json"
+  ]) {
+    const policy = JSON.parse(readFileSync(join("examples", file), "utf8"));
+    const result = validateRepoPolicy(policy);
+    assert.equal(result.ok, true, file);
+  }
 });
 
 test("local config fixture validates and rejects malformed agents", () => {
