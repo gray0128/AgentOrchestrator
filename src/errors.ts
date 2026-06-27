@@ -28,6 +28,8 @@ export const ErrorCode = {
   TaskEnvelopeInvalid: "TASK_ENVELOPE_INVALID",
   WebhookSignatureInvalid: "WEBHOOK_SIGNATURE_INVALID",
   WebhookPayloadInvalid: "WEBHOOK_PAYLOAD_INVALID",
+  WorkflowArtifactMissing: "WORKFLOW_ARTIFACT_MISSING",
+  WorkflowStateConflict: "WORKFLOW_STATE_CONFLICT",
   WorkspaceDiffEmpty: "WORKSPACE_DIFF_EMPTY",
   WorkspaceDiffMismatch: "WORKSPACE_DIFF_MISMATCH",
   WorkspaceFileMissing: "WORKSPACE_FILE_MISSING",

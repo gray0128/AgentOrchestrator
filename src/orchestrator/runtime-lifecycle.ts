@@ -24,8 +24,10 @@ import { renderFinalSummary } from "./closeout.ts";
 import { evaluateMergeGate } from "./merge-gate.ts";
 import { renderPlanComment, renderPlanReviewComment, renderPrReviewComment } from "./plan-comments.ts";
 import { aggregateChecks, decideFixLoop, mapPrReviewVerdictToEvent } from "./pr-gate.ts";
+import type { CheckAggregationResult } from "./pr-gate.ts";
 import { renderPullRequestBody } from "./pr-body.ts";
 import { advanceWebhookEvent, createIssueRunId } from "./webhook-runtime.ts";
+import type { AdvanceWebhookEventResult } from "./webhook-runtime.ts";
 import { buildBlockedHandling } from "./workflow-control.ts";
 import {
   collectWorkspaceDiffEvidence,
@@ -102,7 +104,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     now
   });
   if (!accepted.advanced) {
-    throw new Error(`lifecycle failed to start planning: ${accepted.reason}`);
+    throwPlanningStartError(accepted.reason);
   }
   const runId = accepted.runId;
 
@@ -278,9 +280,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     neutralCountsAsSuccess: input.policy.checks.neutral_counts_as_success,
     checks: checks.checks.map((check) => ({ name: check.name, headSha: commit.headSha, conclusion: check.conclusion }))
   });
-  if (checkAggregation.event !== WorkflowEvent.ChecksSucceeded) {
-    throw new Error("required checks did not succeed");
-  }
+  assertChecksSucceeded(checkAggregation);
   transition(input.database, runId, WorkflowState.CiWaiting, WorkflowState.MergeReady, commit.headSha, WorkflowEvent.ChecksSucceeded, now);
 
   const mergeDecision = evaluateMergeGate({
@@ -301,9 +301,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
     mergeMethod: input.policy.merge.default_method,
     now
   });
-  if (mergeDecision.decision !== "MERGE_ALLOWED" || !mergeDecision.merge_method) {
-    throw new Error(`merge gate rejected: ${mergeDecision.reasons.join(", ")}`);
-  }
+  assertMergeAllowed(mergeDecision);
   const merge = await input.github.mergePullRequest({
     repo: input.event.repo,
     pr,
@@ -345,10 +343,7 @@ export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<
   });
   transition(input.database, runId, WorkflowState.Merged, WorkflowState.IssueClosed, commit.headSha, WorkflowEvent.IssueCloseoutCompleted, now);
 
-  const snapshot = getWorkflowRunSnapshot(input.database, { runId });
-  if (!snapshot) {
-    throw new Error(`run missing after closeout: ${runId}`);
-  }
+  const snapshot = requireWorkflowRunSnapshot(input.database, runId, "closeout");
   return {
     runId,
     issue: input.issue.number,
@@ -373,7 +368,10 @@ async function runRequiredPrReviews(input: {
   const reviewers = input.input.agents.prReviewers ?? [input.input.agents.prReviewer];
   const requiredReviewers = reviewers.slice(0, input.requiredPrApprovals);
   if (requiredReviewers.length < input.requiredPrApprovals) {
-    throw new Error(`not enough independent PR reviewers configured: required ${input.requiredPrApprovals}, available ${requiredReviewers.length}`);
+    throw new OrchestratorError(
+      ErrorCode.RepoPolicyInvalid,
+      `Not enough independent PR reviewers configured: required ${input.requiredPrApprovals}, available ${requiredReviewers.length}`
+    );
   }
   const approved: ReviewerVerdict[] = [];
   for (const [index, reviewer] of requiredReviewers.entries()) {
@@ -394,7 +392,10 @@ async function runRequiredPrReviews(input: {
         trigger: WorkflowEvent.AgentPrReviewChangesRequested
       });
       if (fixDecision.nextState === WorkflowState.Failed) {
-        throw new Error("PR review requested changes and fix rounds are exhausted");
+        throw new OrchestratorError(
+          ErrorCode.RetryExhausted,
+          "PR review requested changes and fix rounds are exhausted"
+        );
       }
       transition(
         input.input.database,
@@ -405,7 +406,10 @@ async function runRequiredPrReviews(input: {
         WorkflowEvent.AgentPrReviewChangesRequested,
         input.now
       );
-      throw new Error(`PR reviewer ${index + 1} requested changes; run moved to fixing`);
+      throw new OrchestratorError(
+        ErrorCode.ReviewChangesRequested,
+        `PR reviewer ${index + 1} requested changes; run moved to fixing`
+      );
     }
     if (prReviewEvent === WorkflowEvent.AgentPrReviewBlocked) {
       transition(
@@ -417,10 +421,13 @@ async function runRequiredPrReviews(input: {
         WorkflowEvent.AgentPrReviewBlocked,
         input.now
       );
-      throw new Error(`PR reviewer ${index + 1} blocked the run`);
+      throw new OrchestratorError(ErrorCode.MergeGateBlocked, `PR reviewer ${index + 1} blocked the run`);
     }
     if (prReviewEvent !== WorkflowEvent.AgentPrReviewApproved) {
-      throw new Error(`PR reviewer ${index + 1} did not approve current head`);
+      throw new OrchestratorError(
+        ErrorCode.StaleHeadSha,
+        `PR reviewer ${index + 1} did not approve current head ${input.headSha}`
+      );
     }
     await input.input.github.submitPullRequestReview({
       repo: input.input.event.repo,
@@ -453,7 +460,7 @@ async function runAgent<Role extends AgentRole>(
 ): Promise<AgentRunOutput<Role>> {
   const result = await adapter.run(envelope, prompt, workspacePath);
   if (!result.ok) {
-    throw new Error(`agent failed: ${result.errorCode} ${result.message}`);
+    throw new OrchestratorError(result.errorCode, result.message);
   }
   return {
     result: result.result as ExtractAgentResult<Role>,
@@ -629,7 +636,10 @@ function transition(
     now
   });
   if (!updated) {
-    throw new Error(`lifecycle transition failed: ${expectedState} -> ${nextState}`);
+    throw new OrchestratorError(
+      ErrorCode.WorkflowStateConflict,
+      `Lifecycle transition failed: ${expectedState} -> ${nextState}`
+    );
   }
 }
 
@@ -677,7 +687,10 @@ export async function runIssueLifecycleFromStep(
   existingRunId?: string
 ): Promise<RunIssueLifecycleResult> {
   if (startStep === "noop" || startStep === "blocked") {
-    throw new Error(`lifecycle cannot execute step ${startStep}`);
+    throw new OrchestratorError(
+      ErrorCode.LocalQueryInvalid,
+      `Lifecycle cannot execute step ${startStep}`
+    );
   }
   if (startStep === "planning") {
     return runIssueLifecycle(input);
@@ -687,12 +700,15 @@ export async function runIssueLifecycleFromStep(
   const runId = existingRunId ?? createIssueRunId(input.event);
   const snapshot = getWorkflowRunSnapshot(input.database, { runId });
   if (!snapshot) {
-    throw new Error(`workflow run missing for resume: ${runId}`);
+    throw new OrchestratorError(ErrorCode.LocalRunNotFound, `Workflow run missing for resume: ${runId}`);
   }
   const pr = snapshot.run.pr_number;
   const headSha = snapshot.run.head_sha;
   if (!pr || !headSha) {
-    throw new Error(`workflow run ${runId} is missing PR binding for resume`);
+    throw new OrchestratorError(
+      ErrorCode.WorkflowArtifactMissing,
+      `Workflow run ${runId} is missing PR binding for resume`
+    );
   }
 
   const stubPlanReview: ReviewerVerdict = {
@@ -748,7 +764,7 @@ export async function runIssueLifecycleFromStep(
     return finishMergeAndCloseout(input, runId, pr, headSha, stubPlanReview, [], stubImplementation, now);
   }
 
-  throw new Error(`unsupported resume step: ${startStep}`);
+  throw new OrchestratorError(ErrorCode.LocalQueryInvalid, `Unsupported resume step: ${startStep}`);
 }
 
 function safeTransition(
@@ -774,7 +790,10 @@ function safeTransition(
   if (!updated) {
     const snapshot = getWorkflowRunSnapshot(database, { runId });
     if (snapshot?.run.state !== nextState) {
-      throw new Error(`resume transition failed: ${expectedState} -> ${nextState}`);
+      throw new OrchestratorError(
+        ErrorCode.WorkflowStateConflict,
+        `Resume transition failed: ${expectedState} -> ${nextState}`
+      );
     }
   }
 }
@@ -802,9 +821,7 @@ async function finishCiMergeAndCloseout(
     neutralCountsAsSuccess: input.policy.checks.neutral_counts_as_success,
     checks: checks.checks.map((check) => ({ name: check.name, headSha, conclusion: check.conclusion }))
   });
-  if (checkAggregation.event !== WorkflowEvent.ChecksSucceeded) {
-    throw new Error("required checks did not succeed");
-  }
+  assertChecksSucceeded(checkAggregation);
   const beforeMerge = getWorkflowRunSnapshot(input.database, { runId });
   safeTransition(
     input.database,
@@ -847,9 +864,7 @@ async function finishMergeAndCloseout(
     mergeMethod: input.policy.merge.default_method,
     now
   });
-  if (mergeDecision.decision !== "MERGE_ALLOWED" || !mergeDecision.merge_method) {
-    throw new Error(`merge gate rejected: ${mergeDecision.reasons.join(", ")}`);
-  }
+  assertMergeAllowed(mergeDecision);
   const merge = await input.github.mergePullRequest({
     repo: input.event.repo,
     pr,
@@ -900,10 +915,7 @@ async function finishMergeAndCloseout(
   });
   transition(input.database, runId, WorkflowState.Merged, WorkflowState.IssueClosed, headSha, WorkflowEvent.IssueCloseoutCompleted, now);
 
-  const resultSnapshot = getWorkflowRunSnapshot(input.database, { runId });
-  if (!resultSnapshot) {
-    throw new Error(`run missing after closeout: ${runId}`);
-  }
+  const resultSnapshot = requireWorkflowRunSnapshot(input.database, runId, "closeout");
   return {
     runId,
     issue: input.issue.number,
@@ -912,4 +924,64 @@ async function finishMergeAndCloseout(
     mergeSha: merge.mergeSha,
     snapshot: resultSnapshot
   };
+}
+
+function throwPlanningStartError(reason: Extract<AdvanceWebhookEventResult, { readonly advanced: false }>["reason"]): never {
+  const message = `Lifecycle failed to start planning: ${reason}`;
+  switch (reason) {
+    case "lease_conflict":
+      throw new OrchestratorError(ErrorCode.LeaseConflict, message);
+    case "state_conflict":
+      throw new OrchestratorError(ErrorCode.WorkflowStateConflict, message);
+    case "missing_issue":
+    case "unsupported_event":
+      throw new OrchestratorError(ErrorCode.WebhookPayloadInvalid, message);
+  }
+}
+
+function assertChecksSucceeded(checkAggregation: CheckAggregationResult): void {
+  if (checkAggregation.event === WorkflowEvent.ChecksSucceeded) {
+    return;
+  }
+
+  const code =
+    checkAggregation.event === WorkflowEvent.ChecksFailed ? ErrorCode.ChecksFailed : ErrorCode.ChecksPending;
+  const details = [
+    checkAggregation.failed.length > 0
+      ? `failed: ${checkAggregation.failed.map((check) => check.name).join(", ")}`
+      : undefined,
+    checkAggregation.pending.length > 0 ? `pending: ${checkAggregation.pending.join(", ")}` : undefined,
+    checkAggregation.missing.length > 0 ? `missing: ${checkAggregation.missing.join(", ")}` : undefined
+  ].filter((detail): detail is string => detail !== undefined);
+
+  throw new OrchestratorError(
+    code,
+    details.length > 0 ? `Required checks did not succeed (${details.join("; ")})` : "Required checks did not succeed"
+  );
+}
+
+function assertMergeAllowed(mergeDecision: ReturnType<typeof evaluateMergeGate>): void {
+  if (mergeDecision.decision === "MERGE_ALLOWED" && mergeDecision.merge_method) {
+    return;
+  }
+
+  throw new OrchestratorError(
+    ErrorCode.MergeGateBlocked,
+    `Merge gate rejected: ${mergeDecision.reasons.join(", ")}`
+  );
+}
+
+function requireWorkflowRunSnapshot(
+  database: StateDatabase,
+  runId: string,
+  phase: "closeout" | "resume"
+): WorkflowRunSnapshot {
+  const snapshot = getWorkflowRunSnapshot(database, { runId });
+  if (!snapshot) {
+    throw new OrchestratorError(
+      ErrorCode.WorkflowArtifactMissing,
+      `Workflow run missing after ${phase}: ${runId}`
+    );
+  }
+  return snapshot;
 }
