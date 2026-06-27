@@ -603,6 +603,106 @@ test("serve runtime accepts signed GitHub webhook intake when TCP bind is availa
   }
 });
 
+test("serve runtime rejects invalid webhook signatures with 401", async (context) => {
+  const database = openStateDatabase();
+  migrateStateDatabase(database);
+  let runtime;
+  try {
+    runtime = await startServeRuntime({
+      host: "127.0.0.1",
+      port: 0,
+      database,
+      databasePath: ":memory:",
+      webhookSecret: "secret",
+    });
+  } catch (error) {
+    database.close();
+    if (error instanceof Error && "code" in error && error.code === "EPERM") {
+      context.skip("sandbox does not allow binding a local TCP listener");
+      return;
+    }
+    throw error;
+  }
+
+  try {
+    const payload = JSON.stringify({ action: "labeled" });
+    const response = await fetch(
+      `http://${runtime.host}:${runtime.port}/webhook`,
+      {
+        method: "POST",
+        headers: {
+          "x-github-event": "issues",
+          "x-github-delivery": "delivery-invalid-signature",
+          "x-hub-signature-256": createSignature(payload, "wrong-secret"),
+        },
+        body: payload,
+      },
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 401);
+    assert.equal(body.ok, false);
+    assert.equal(body.error, "WEBHOOK_SIGNATURE_INVALID");
+    assert.equal(listRecentDeliveries(database, { limit: 10 }).total, 0);
+  } finally {
+    await runtime.close();
+  }
+});
+
+test("serve runtime ignores unsupported webhook events with delivery status ignored", async (context) => {
+  const database = openStateDatabase();
+  migrateStateDatabase(database);
+  let runtime;
+  try {
+    runtime = await startServeRuntime({
+      host: "127.0.0.1",
+      port: 0,
+      database,
+      databasePath: ":memory:",
+      webhookSecret: "secret",
+    });
+  } catch (error) {
+    database.close();
+    if (error instanceof Error && "code" in error && error.code === "EPERM") {
+      context.skip("sandbox does not allow binding a local TCP listener");
+      return;
+    }
+    throw error;
+  }
+
+  try {
+    const payload = JSON.stringify({
+      action: "created",
+      repository: { name: "repo", owner: { login: "octo" } },
+    });
+    const response = await fetch(
+      `http://${runtime.host}:${runtime.port}/webhook`,
+      {
+        method: "POST",
+        headers: {
+          "x-github-event": "star",
+          "x-github-delivery": "delivery-unsupported",
+          "x-hub-signature-256": createSignature(payload, "secret"),
+        },
+        body: payload,
+      },
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 202);
+    assert.equal(body.ok, true);
+    assert.equal(body.ignored, true);
+    assert.equal(body.reason, "unsupported_event");
+
+    const deliveries = listRecentDeliveries(database, { limit: 10 });
+    assert.equal(deliveries.total, 1);
+    assert.equal(deliveries.items[0]?.deliveryId, "delivery-unsupported");
+    assert.equal(deliveries.items[0]?.status, "ignored");
+  } finally {
+    await runtime.close();
+  }
+});
+
 test("serve runtime treats replayed delivery ids as duplicates after restart", async (context) => {
   const databasePath = join(mkdtempSync(join(tmpdir(), "ao-dedupe-")), "state.sqlite");
   let database = openStateDatabase(databasePath);
@@ -670,8 +770,9 @@ test("serve runtime treats replayed delivery ids as duplicates after restart", a
       });
       const replayBody = await replay.json();
 
-      assert.equal(replay.status, 200);
+      assert.equal(replay.status, 202);
       assert.equal(replayBody.duplicate, true);
+      assert.equal(replayBody.ignored, true);
       assert.equal(replayBody.delivery.status, "processed");
       assert.equal(github.issueComments.length, 1);
 

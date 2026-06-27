@@ -4,7 +4,7 @@ These contracts describe side-effecting operations.
 
 ## Webhook Intake
 
-Operation: `POST /webhooks/github`
+Operation: `POST /webhook`
 
 Validation:
 

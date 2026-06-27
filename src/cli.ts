@@ -1196,9 +1196,10 @@ async function handleWebhookRequest(input: {
       repoName: repo.repoName,
     });
     if (!delivery.accepted) {
-      writeJson(input.response, 200, {
+      writeJson(input.response, 202, {
         ok: true,
         duplicate: true,
+        ignored: true,
         errorCode: delivery.errorCode,
         delivery: delivery.record,
       });
@@ -1227,6 +1228,17 @@ async function handleWebhookRequest(input: {
         reason: "ACTOR_NOT_ALLOWED",
         actor: domainEvent.actor,
         domainEvent,
+      });
+      return;
+    }
+    if (!domainEvent) {
+      await finalizeDeliveryStatus(input.deliveryStore, deliveryId, {
+        status: "ignored",
+      });
+      writeJson(input.response, 202, {
+        ok: true,
+        ignored: true,
+        reason: "unsupported_event",
       });
       return;
     }
@@ -1262,6 +1274,23 @@ async function handleWebhookRequest(input: {
           github: input.github,
           policySummary: input.policySummary,
         });
+    if (
+      !dispatchContext &&
+      !advancement.advanced &&
+      advancement.reason === "unsupported_event"
+    ) {
+      await finalizeDeliveryStatus(input.deliveryStore, deliveryId, {
+        status: "ignored",
+      });
+      writeJson(input.response, 202, {
+        ok: true,
+        ignored: true,
+        reason: "unsupported_event",
+        domainEvent,
+        advancement,
+      });
+      return;
+    }
     await finalizeDeliveryStatus(input.deliveryStore, deliveryId, {
       status: "processed",
     });
@@ -1289,7 +1318,7 @@ async function handleWebhookRequest(input: {
       error instanceof Error && "code" in error
         ? String(error.code)
         : ErrorCode.WebhookPayloadInvalid;
-    writeJson(input.response, 400, {
+    writeJson(input.response, webhookErrorStatus(code), {
       ok: false,
       error: code,
       message: sanitizeMarkdown(
@@ -1297,6 +1326,10 @@ async function handleWebhookRequest(input: {
       ),
     });
   }
+}
+
+function webhookErrorStatus(code: string): number {
+  return code === ErrorCode.WebhookSignatureInvalid ? 401 : 400;
 }
 
 function extractRepoFromPayload(payload: unknown): {
