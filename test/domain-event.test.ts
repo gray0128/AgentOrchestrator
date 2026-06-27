@@ -24,6 +24,39 @@ test("issues labeled with agent:autopilot normalize to domain events", async () 
   assert.equal(event.actor, "alice");
 });
 
+test("issues opened with agent:autopilot normalize to autopilot requested", async () => {
+  const event = normalizeGitHubWebhook({
+    eventName: "issues",
+    deliveryId: "delivery-opened",
+    receivedAt,
+    payload: {
+      action: "opened",
+      repository: repo(),
+      issue: {
+        number: 123,
+        labels: [{ name: "agent:autopilot" }]
+      },
+      sender: { login: "alice" }
+    }
+  });
+
+  await assertDomainEventMatchesSchema(event);
+  assert.equal(event?.event_type, DomainEventType.IssueAutopilotRequested);
+  assert.equal(event?.issue, 123);
+});
+
+test("issues unlabeled agent:autopilot normalize to autopilot removed", () => {
+  const event = normalizeGitHubWebhook({
+    eventName: "issues",
+    deliveryId: "delivery-autopilot-removed",
+    receivedAt,
+    payload: issuePayload("unlabeled", "agent:autopilot")
+  });
+
+  assert.equal(event?.event_type, DomainEventType.ControlAutopilotRemoved);
+  assert.equal(event?.issue, 123);
+});
+
 test("issue control labels normalize to pause, resume, and no-merge events", () => {
   const pause = normalizeGitHubWebhook({
     eventName: "issues",
@@ -164,6 +197,53 @@ test("pull_request_review_comment mention normalizes to comment dispatch", async
   assert.equal(event?.head_sha, "abc1234567890");
 });
 
+test("pull_request_review submitted normalizes external review verdicts", async () => {
+  const approved = normalizePullRequestReview("approved");
+  const changesRequested = normalizePullRequestReview("changes_requested");
+  const commented = normalizePullRequestReview("commented");
+
+  await assertDomainEventMatchesSchema(approved);
+  assert.equal(approved?.event_type, DomainEventType.AgentPrReviewApproved);
+  assert.equal(approved?.issue, 13);
+  assert.equal(approved?.pr, 14);
+  assert.equal(approved?.head_sha, "abc1234567890");
+
+  assert.equal(changesRequested?.event_type, DomainEventType.AgentPrReviewChangesRequested);
+  assert.equal(commented, undefined);
+});
+
+test("status events normalize to succeeded, failed, or pending", () => {
+  const success = normalizeStatus("success");
+  const failure = normalizeStatus("failure");
+  const pending = normalizeStatus("pending");
+
+  assert.equal(success?.event_type, DomainEventType.ChecksSucceeded);
+  assert.equal(failure?.event_type, DomainEventType.ChecksFailed);
+  assert.equal(pending?.event_type, DomainEventType.ChecksPending);
+  assert.equal(success?.head_sha, "abc123");
+});
+
+test("deferred pull_request opened and reopened webhooks are ignored", () => {
+  for (const action of ["opened", "reopened"] as const) {
+    const event = normalizeGitHubWebhook({
+      eventName: "pull_request",
+      deliveryId: `delivery-pr-${action}`,
+      receivedAt,
+      payload: {
+        action,
+        repository: repo(),
+        pull_request: {
+          number: 14,
+          body: "Closes #13",
+          head: { ref: "agent/issue-13-task", sha: "abc123" }
+        },
+        sender: { login: "alice" }
+      }
+    });
+    assert.equal(event, undefined, `expected ${action} to stay deferred`);
+  }
+});
+
 test("unsupported webhook events are ignored", () => {
   const event = normalizeGitHubWebhook({
     eventName: "star",
@@ -232,6 +312,40 @@ function normalizeWorkflowRun(action: string, conclusion: string | null) {
         pull_requests: [{ number: 45 }]
       },
       sender: { login: "alice" }
+    }
+  });
+}
+
+function normalizePullRequestReview(state: string) {
+  return normalizeGitHubWebhook({
+    eventName: "pull_request_review",
+    deliveryId: `delivery-review-${state}`,
+    receivedAt,
+    payload: {
+      action: "submitted",
+      repository: repo(),
+      review: { state },
+      pull_request: {
+        number: 14,
+        body: "Closes #13",
+        head: { ref: "agent/issue-13-task", sha: "abc1234567890" }
+      },
+      sender: { login: "reviewer" }
+    }
+  });
+}
+
+function normalizeStatus(state: string) {
+  return normalizeGitHubWebhook({
+    eventName: "status",
+    deliveryId: `delivery-status-${state}`,
+    receivedAt,
+    payload: {
+      action: "completed",
+      state,
+      sha: "abc123",
+      repository: repo(),
+      sender: { login: "ci-bot" }
     }
   });
 }

@@ -13,6 +13,7 @@
         "issue.comment_dispatch_requested",
         "control.pause",
         "control.resume",
+        "control.autopilot_removed",
         "control.retry",
         "control.no_merge",
         "agent.plan_submitted",
