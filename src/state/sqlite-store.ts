@@ -143,6 +143,7 @@ export type WorkflowRunForReconciliation = {
   readonly repoOwner: string;
   readonly repoName: string;
   readonly issueNumber: number;
+  readonly prNumber?: number;
   readonly state: string;
   readonly retryCount: number;
   readonly leaseOwner?: string;
@@ -244,6 +245,7 @@ export function listWorkflowRunsForReconciliation(database: StateDatabase): read
                repo_owner,
                repo_name,
                issue_number,
+               pr_number,
                state,
                retry_count,
                lease_owner,
@@ -259,6 +261,7 @@ export function listWorkflowRunsForReconciliation(database: StateDatabase): read
     readonly repo_owner: string;
     readonly repo_name: string;
     readonly issue_number: number;
+    readonly pr_number: number | null;
     readonly state: string;
     readonly retry_count: number;
     readonly lease_owner: string | null;
@@ -272,6 +275,7 @@ export function listWorkflowRunsForReconciliation(database: StateDatabase): read
     repoOwner: row.repo_owner,
     repoName: row.repo_name,
     issueNumber: row.issue_number,
+    prNumber: row.pr_number ?? undefined,
     state: row.state,
     retryCount: row.retry_count,
     leaseOwner: row.lease_owner ?? undefined,

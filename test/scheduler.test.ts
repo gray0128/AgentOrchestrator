@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   WorkflowState,
   buildSchedulerReport,
+  buildSchedulerRunsForReport,
   decideSchedulerRun,
 } from "../src/index.ts";
 import { ErrorCode } from "../src/errors.ts";
@@ -45,6 +46,46 @@ test("scheduler selects pending, fixing, expired lease, and retryable runs", () 
     ],
   );
   assert.deepEqual(report.skipped, []);
+});
+
+test("scheduler joins issue labels from reconcile snapshots before deciding", () => {
+  const runs = buildSchedulerRunsForReport({
+    runs: [
+      {
+        runId: "run_pause_label",
+        state: WorkflowState.Planning,
+        repoOwner: "octo",
+        repoName: "repo",
+        issueNumber: 9,
+      },
+    ],
+    issues: [
+      {
+        repo: { owner: "octo", name: "repo" },
+        issue: 9,
+        state: "open",
+        labels: ["agent:autopilot", "needs-human"],
+      },
+    ],
+  });
+  const report = buildSchedulerReport({ runs, now });
+
+  assert.equal(report.scheduled.length, 0);
+  assert.equal(report.skipped[0]?.reason, "blocked_labels");
+});
+
+test("scheduler skips recoverable runs when linked issue labels block scheduling", () => {
+  const decision = decideSchedulerRun(
+    {
+      runId: "run_pause_label",
+      state: WorkflowState.Planning,
+      issueLabels: ["agent:autopilot", "agent:pause"],
+    },
+    now,
+  );
+
+  assert.equal(decision.action, "skip");
+  assert.equal(decision.reason, "blocked_labels");
 });
 
 test("scheduler skips paused, blocked, terminal, active lease, and exhausted retry runs", () => {

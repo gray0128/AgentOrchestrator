@@ -1,3 +1,5 @@
+import { hasSchedulerBlockingLabels } from "../state/labels.ts";
+
 export type RepoRef = {
   readonly owner: string;
   readonly name: string;
@@ -15,6 +17,7 @@ export type ReconciliationPullRequestInput = {
   readonly pr: number;
   readonly state: "open" | "closed" | "merged";
   readonly branch: string;
+  readonly labels?: readonly string[];
 };
 
 export type ReconciliationRunInput = {
@@ -38,8 +41,6 @@ export type ReconciliationDryRunReport = {
 };
 
 const terminalRunStates = new Set(["issue_closed", "failed"]);
-const terminalLabels = new Set(["agent:done"]);
-const blockingLabels = new Set(["agent:pause", "agent:no-merge", "needs-human", "agent:blocked"]);
 
 export function buildReconciliationDryRunReport(input: ReconciliationDryRunInput): ReconciliationDryRunReport {
   return {
@@ -54,7 +55,7 @@ function isCandidateIssue(issue: ReconciliationIssueInput): boolean {
     return false;
   }
 
-  return !issue.labels.some((label) => terminalLabels.has(label) || blockingLabels.has(label));
+  return !hasSchedulerBlockingLabels(issue.labels);
 }
 
 function isCandidatePullRequest(pr: ReconciliationPullRequestInput): boolean {

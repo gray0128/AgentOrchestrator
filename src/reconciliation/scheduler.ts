@@ -1,5 +1,7 @@
 import { ErrorCode } from "../errors.ts";
+import { hasSchedulerBlockingLabels } from "../state/labels.ts";
 import { WorkflowState, isRecoverableState } from "../state/state-machine.ts";
+import type { ReconciliationIssueInput, ReconciliationPullRequestInput } from "./dry-run.ts";
 
 export type SchedulerRunInput = {
   readonly runId: string;
@@ -8,6 +10,22 @@ export type SchedulerRunInput = {
   readonly leaseExpiresAt?: string;
   readonly retryCount?: number;
   readonly lastErrorCode?: string | null;
+  readonly issueLabels?: readonly string[];
+  readonly prLabels?: readonly string[];
+};
+
+export type SchedulerRunLink = {
+  readonly runId: string;
+  readonly state: string;
+  readonly leaseOwner?: string;
+  readonly leaseExpiresAt?: string;
+  readonly retryCount?: number;
+  readonly lastErrorCode?: string | null;
+  readonly repoOwner?: string;
+  readonly repoName?: string;
+  readonly issueNumber?: number;
+  readonly prNumber?: number;
+  readonly labels?: readonly string[];
 };
 
 export type SchedulerRunDecision =
@@ -21,6 +39,7 @@ export type SchedulerRunDecision =
       readonly action: "skip";
       readonly reason:
         | "active_lease"
+        | "blocked_labels"
         | "blocked_state"
         | "retry_exhausted"
         | "terminal_state"
@@ -45,6 +64,22 @@ const terminalStates = new Set<string>([
   WorkflowState.IssueClosed,
 ]);
 
+export function buildSchedulerRunsForReport(input: {
+  readonly runs: readonly SchedulerRunLink[];
+  readonly issues?: readonly ReconciliationIssueInput[];
+  readonly pullRequests?: readonly ReconciliationPullRequestInput[];
+}): readonly SchedulerRunInput[] {
+  return input.runs.map((run) => ({
+    runId: run.runId,
+    state: run.state,
+    leaseOwner: run.leaseOwner,
+    leaseExpiresAt: run.leaseExpiresAt,
+    retryCount: run.retryCount,
+    lastErrorCode: run.lastErrorCode,
+    ...resolveSchedulerRunLabels(run, input.issues ?? [], input.pullRequests ?? []),
+  }));
+}
+
 export function buildSchedulerReport(input: {
   readonly runs: readonly SchedulerRunInput[];
   readonly now: Date;
@@ -59,11 +94,45 @@ export function buildSchedulerReport(input: {
   };
 }
 
+export function resolveSchedulerRunLabels(
+  run: SchedulerRunLink,
+  issues: readonly ReconciliationIssueInput[],
+  pullRequests: readonly ReconciliationPullRequestInput[],
+): Pick<SchedulerRunInput, "issueLabels" | "prLabels"> {
+  if (run.labels) {
+    return { issueLabels: run.labels };
+  }
+
+  const issueLabels =
+    run.repoOwner && run.repoName && run.issueNumber
+      ? issues.find(
+          (issue) =>
+            issue.repo.owner === run.repoOwner &&
+            issue.repo.name === run.repoName &&
+            issue.issue === run.issueNumber,
+        )?.labels
+      : undefined;
+  const prLabels =
+    run.repoOwner && run.repoName && run.prNumber
+      ? pullRequests.find(
+          (pullRequest) =>
+            pullRequest.repo.owner === run.repoOwner &&
+            pullRequest.repo.name === run.repoName &&
+            pullRequest.pr === run.prNumber,
+        )?.labels
+      : undefined;
+
+  return { issueLabels, prLabels };
+}
+
 export function decideSchedulerRun(
   run: SchedulerRunInput,
   now: Date,
   maxRetries = 2,
 ): SchedulerRunDecision {
+  if (hasBlockingLabelSnapshot(run)) {
+    return { run, action: "skip", reason: "blocked_labels" };
+  }
   if (terminalStates.has(run.state)) {
     return { run, action: "skip", reason: "terminal_state" };
   }
@@ -113,4 +182,9 @@ function hasExpiredLease(run: SchedulerRunInput, now: Date): boolean {
       run.leaseExpiresAt &&
       Date.parse(run.leaseExpiresAt) <= now.getTime(),
   );
+}
+
+function hasBlockingLabelSnapshot(run: SchedulerRunInput): boolean {
+  const labels = [...(run.issueLabels ?? []), ...(run.prLabels ?? [])];
+  return labels.length > 0 && hasSchedulerBlockingLabels(labels);
 }

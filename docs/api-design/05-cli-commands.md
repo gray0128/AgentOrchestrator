@@ -136,6 +136,7 @@ Rules:
 - Exactly one of `--dry-run` or `--apply` is required.
 - `--dry-run` never writes SQLite state.
 - `--apply` skips paused, blocked, terminal, active-lease, and retry-exhausted runs.
+- When `--input` provides issue or PR label snapshots, `--apply` also skips runs whose linked issue/PR carries pause, blocked, terminal, or human-control labels.
 - `--apply` does not run role agents directly; it prepares eligible runs for the lifecycle executor by claiming scheduler ownership.
 
 ### `ao validate`
