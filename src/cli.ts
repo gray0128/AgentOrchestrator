@@ -52,14 +52,16 @@ import { shouldDiscardActor } from "./policy/actor-gate.ts";
 import { loadRepoPolicy } from "./policy/repo-policy-loader.ts";
 import type { LoadedRepoPolicy } from "./policy/repo-policy-loader.ts";
 import { buildReconciliationDryRunReport } from "./reconciliation/dry-run.ts";
+import { buildSchedulerReport } from "./reconciliation/scheduler.ts";
 import { sanitizeMarkdown } from "./security/redaction.ts";
 import { openReadOnlyStateDatabase } from "./state/sqlite-queries.ts";
 import {
-  getWorkflowRunSnapshot,
-  getWorkflowRunSnapshotByPullRequest,
-  listWorkflowRunsForReconciliation,
-  migrateStateDatabase,
-  openStateDatabase,
+	  getWorkflowRunSnapshot,
+	  getWorkflowRunSnapshotByPullRequest,
+	  claimScheduledRun,
+	  listWorkflowRunsForReconciliation,
+	  migrateStateDatabase,
+	  openStateDatabase,
 } from "./state/sqlite-store.ts";
 import type { StateDatabase } from "./state/sqlite-store.ts";
 import { WorkflowState } from "./state/state-machine.ts";
@@ -496,20 +498,29 @@ async function runReconcile(
   io: CliIo,
 ): Promise<number> {
   const flags = parseFlags(args);
-  if (!hasFlag(flags, "dryRun")) {
+  const dryRun = hasFlag(flags, "dryRun");
+  const apply = hasFlag(flags, "apply");
+  if (dryRun === apply) {
     io.stderr(
-      "reconcile currently supports --dry-run only until the real GitHub adapter is implemented",
+      "reconcile requires exactly one of --dry-run or --apply",
     );
     return 1;
   }
 
   const input = buildReconcileInput(flags);
   const report = buildReconciliationDryRunReport(input);
+  const scheduler = buildSchedulerReport({
+    runs: input.runs,
+    now: input.now,
+    maxRetries: parseOptionalPositiveIntegerFlag(flags, "maxRetries"),
+  });
+  const applied = apply ? applySchedulerDecisions(flags, scheduler.scheduled, input.now) : [];
   io.stdout(
     JSON.stringify({
       ok: true,
       command: "reconcile",
-      dryRun: true,
+      dryRun,
+      apply,
       examined: {
         issues: input.issues.length,
         pullRequests: input.pullRequests.length,
@@ -520,6 +531,12 @@ async function runReconcile(
         candidatePullRequests: report.candidatePullRequests.length,
         expiredLeases: report.expiredLeases.length,
       },
+      scheduler: {
+        scheduled: scheduler.scheduled.length,
+        skipped: scheduler.skipped.length,
+        applied: applied.length,
+      },
+      applied,
       report,
     }),
   );
@@ -1696,18 +1713,72 @@ function buildReconcileInput(flags: CliFlags) {
   }
 }
 
+function applySchedulerDecisions(
+  flags: CliFlags,
+  decisions: ReturnType<typeof buildSchedulerReport>["scheduled"],
+  now: Date,
+) {
+  const config = loadValidLocalConfig(flags);
+  const databasePath = stringFlag(flags, "db") ?? config.database.path;
+  const leaseOwner = stringFlag(flags, "leaseOwner") ?? "reconcile:apply";
+  const leaseTtlMs = parseOptionalPositiveIntegerFlag(flags, "leaseTtlMs") ?? 5 * 60 * 1000;
+  ensureParentDirectory(databasePath);
+  const database = openStateDatabase(databasePath);
+  try {
+    migrateStateDatabase(database);
+    return decisions.map((decision) => {
+      const claimed = claimScheduledRun(database, {
+        runId: decision.run.runId,
+        expectedState: decision.run.state,
+        leaseOwner,
+        ttlMs: leaseTtlMs,
+        incrementRetry: decision.action === "retry",
+        now,
+      });
+      return {
+        runId: decision.run.runId,
+        action: decision.action,
+        reason: decision.reason,
+        claimed,
+      };
+    });
+  } finally {
+    database.close();
+  }
+}
+
 function filterRuns(
   runs: ReturnType<typeof listWorkflowRunsForReconciliation>,
   flags: CliFlags,
 ) {
   const repo = stringFlag(flags, "repo");
-  const issue = stringFlag(flags, "issue");
+  const issue = parseOptionalPositiveIntegerFlag(flags, "issue");
   if (!repo && !issue) {
     return runs;
   }
-  // The compact reconciliation run input does not include repo/issue identity yet.
-  // Keep the command conservative until GitHub-backed reconciliation supplies that evidence.
-  return runs;
+  const parsedRepo = repo ? parseRepoFlag(repo) : undefined;
+  return runs.filter((run) => {
+    const repoMatches =
+      !parsedRepo ||
+      (run.repoOwner === parsedRepo.owner && run.repoName === parsedRepo.name);
+    const issueMatches = !issue || run.issueNumber === issue;
+    return repoMatches && issueMatches;
+  });
+}
+
+function parseOptionalPositiveIntegerFlag(
+  flags: CliFlags,
+  name: string,
+): number | undefined {
+  const value = stringFlag(flags, name);
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`--${name} must be a positive integer`);
+  }
+  return parsed;
 }
 
 function buildRunLookup(flags: CliFlags) {
@@ -1777,7 +1848,7 @@ function renderHelp(): string {
     "  ao live-check --config <path>",
     "  ao serve --config <path> [--github-mode mock|live] [--host 127.0.0.1] [--port 3000]",
     "  ao live-smoke --url <service-url> --repo <owner/name> --issue <number>",
-    "  ao reconcile --config <path> --dry-run",
+    "  ao reconcile --config <path> (--dry-run | --apply)",
     "  ao inspect-run --config <path> (--run-id <id> | --repo <owner/name> --issue <number>)",
     "  ao ui --config <path> [--host 127.0.0.1] [--port 23847]",
     "",

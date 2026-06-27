@@ -94,6 +94,25 @@ Labels are a user interface and recovery signal. SQLite CAS and idempotency reco
 | Duplicate webhook delivery | Mark ignored, do not advance state. |
 | Lost webhook | Reconciliation may advance after re-reading GitHub. |
 
+## Minimal Scheduler Contract
+
+`ao reconcile --apply` is the explicit single-process scheduler entrypoint. It does not introduce a queue system and does not bypass the workflow state machine.
+
+The scheduler may claim a run when:
+
+- The run is in a recoverable nonterminal state and has no active lease.
+- The run has an expired lease.
+- The run's last error is `GITHUB_RATE_LIMITED` or `AGENT_PROCESS_FAILED` and the retry budget is still available.
+
+When the scheduler claims a run, it writes a new lease owner and lease expiry. For retryable errors, it also increments `retry_count`. The claimed run is then eligible for the existing lifecycle executor to continue work.
+
+The scheduler must not claim:
+
+- `paused`, `blocked`, `failed`, or `issue_closed` runs.
+- Runs with an active unexpired lease.
+- Runs whose retry budget is exhausted.
+- Issues or PRs carrying pause, blocked, terminal, or human-control labels.
+
 ## Reconciliation Contract
 
 Reconciliation scans:
