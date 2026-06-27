@@ -2,6 +2,8 @@
 
 The CLI is the operator surface for local setup, readiness checks, webhook service startup, smoke delivery, reconciliation inspection, and run debugging. Commands must stay scriptable and must not print secret values.
 
+Installation paths (release binary, `npm link`, source `npm run cli --`), shebang requirements, and global `ao` troubleshooting are documented in the repository [README](../../README.md#全局-ao-排障). CI and release workflows verify the same entry matrix via `npm run smoke:cli`.
+
 ## Commands
 
 ### `ao init-config`
