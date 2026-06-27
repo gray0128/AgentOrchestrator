@@ -37,6 +37,7 @@ export class FakeGitHubApiAdapter implements GitHubApiAdapter {
   readonly closedIssues: CloseIssueInput[] = [];
   readonly checkSummaries = new Map<string, CheckSummaryReadResult>();
   readonly pullRequestContexts = new Map<string, StoredPullRequestContext>();
+  readonly issueLabelsByIssue = new Map<string, readonly string[]>();
   readonly commentsByIdempotencyKey = new Map<string, StoredIssueComment>();
   readonly refsByIdempotencyKey = new Map<string, GitHubWriteResult | CommitChangesResult | MergePullRequestResult>();
 
@@ -61,6 +62,10 @@ export class FakeGitHubApiAdapter implements GitHubApiAdapter {
 
     const result = { responseRef: `issue:${input.issue}:labels`, created: true };
     this.issueLabels.push(input);
+    this.issueLabelsByIssue.set(
+      `${input.repo.owner}/${input.repo.name}#${input.issue}`,
+      input.labels,
+    );
     this.refsByIdempotencyKey.set(input.idempotencyKey, result);
     return result;
   }
@@ -135,13 +140,14 @@ export class FakeGitHubApiAdapter implements GitHubApiAdapter {
       headSha,
       requiredChecks: input.requiredChecks
     });
+    const issueKey = `${input.repo.owner}/${input.repo.name}#${input.issue}`;
     return {
       responseRef: stored?.responseRef ?? `pr:${input.pr}:${headSha}`,
       pr: input.pr,
       headSha,
       mergeable: stored?.mergeable ?? true,
       mergeableState: stored?.mergeableState ?? "clean",
-      labels: stored?.labels ?? [],
+      labels: stored?.labels ?? this.issueLabelsByIssue.get(issueKey) ?? [],
       approvedReviewCount: stored?.approvedReviewCount ?? 1,
       checks
     };
