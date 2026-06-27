@@ -332,6 +332,64 @@ async function assertPathPolicyBlockedLifecycle(input: {
   assert.deepEqual(github.issueLabels.at(-1)?.labels, ["agent:autopilot", "agent:blocked", "needs-human"]);
 }
 
+test("runtime lifecycle does not write blocked GitHub artifacts when blocked transition CAS fails", async () => {
+  const fixture = createGitWorkspaceFixture({
+    repoName: repo.name,
+    issue: issue.number,
+    issueTitle: issue.title
+  });
+  const database = openStateDatabase();
+  migrateStateDatabase(database);
+  const github = new FakeGitHubApiAdapter();
+  const runId = "run_octo_repo_issue_123";
+
+  await assert.rejects(
+    () =>
+      runIssueLifecycle({
+        database,
+        github,
+        agents: lifecycleAgents({
+          changedFiles: [".github/workflows/ci.yml"],
+          seedWorkspace: (workspacePath) => {
+            seedWorkspaceFile(workspacePath, ".github/workflows/ci.yml", "workflow\n");
+            database.prepare("UPDATE workflow_runs SET head_sha = ? WHERE run_id = ?").run("conflict-sha", runId);
+          }
+        }),
+        event: {
+          schema: "agent-orchestrator.domain-event.v1",
+          event_type: DomainEventType.IssueAutopilotRequested,
+          delivery_id: "delivery-blocked-transition-cas-failure",
+          repo: { owner: repo.owner, name: repo.name },
+          issue: issue.number,
+          actor: issue.author,
+          source: "webhook",
+          created_at: "2026-06-24T08:00:00.000Z"
+        },
+        repo,
+        issue,
+        workspace: {
+          path: fixture.workspacePath,
+          branch: fixture.branch
+        },
+        workspaceRoot: fixture.workspaceRoot,
+        sourceRepoPath: fixture.sourceRepoPath,
+        policy,
+        policySummary: "path policy",
+        now: new Date("2026-06-24T08:00:00.000Z")
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof OrchestratorError);
+      assert.equal(error.code, ErrorCode.WorkflowStateConflict);
+      return true;
+    }
+  );
+
+  const snapshot = getWorkflowRunSnapshot(database, { runId });
+  assert.equal(snapshot?.run.state, WorkflowState.Implementing);
+  assert.equal(github.issueComments.filter((comment) => comment.body.includes("## Automation Blocked")).length, 0);
+  assert.ok(!github.issueLabels.some((write) => write.labels.includes("needs-human")));
+});
+
 test("runtime lifecycle blocks denied paths from actual git diff before GitHub writes", async () => {
   await assertPathPolicyBlockedLifecycle({
     policy,

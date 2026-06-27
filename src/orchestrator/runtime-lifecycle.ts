@@ -1006,7 +1006,7 @@ async function blockRunForMissingResumeArtifacts(
   });
   const snapshot = getWorkflowRunSnapshot(input.database, { runId });
   if (snapshot) {
-    transition(
+    await transition(
       input.database,
       runId,
       snapshot.run.state,
@@ -1070,7 +1070,7 @@ async function blockRunForPathPolicy(
     explanation: block.explanation,
     requiredAction: block.requiredAction
   });
-  transition(
+  await transition(
     input.database,
     runId,
     currentState,
