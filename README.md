@@ -42,7 +42,7 @@ Live 运维和恢复演练按 [Live Operations And Recovery Runbook](docs/operat
 | --- | --- | --- |
 | MVP | 可本地配置 GitHub App，接收 webhook，推进核心状态机，并通过 GitHub Issue / PR / Check 记录用户可见产物。 | 当前版本目标。 |
 | Hardening | 对失败恢复、fix loop、diff enforcement、stale head 处理、幂等和回归测试做更系统的加固。 | 部分能力已有，仍在补齐。 |
-| Operational-ready | 具备可重复 release gate、live smoke gate、recovery drill、runbook、known limitations、observability 和 credential rotation。 | 标准已定义，完整达标仍需逐项验证。 |
+| Operational-ready | 具备可重复 release gate、live smoke gate、recovery drill gate、docs/runbook gate 和 known limitations gate。 | 标准已定义，完整达标仍需逐项验证；observability、credential rotation 等未达标项必须写入 known limitations。 |
 
 已知 readiness 缺口包括长期调度、真实 diff enforcement 完整性、fix loop 加固、集中 observability 和 credential rotation。每次 release 前应按 operational-ready 标准逐项检查；未满足的项目必须在 release notes 的 known limitations 中明确说明。
 
