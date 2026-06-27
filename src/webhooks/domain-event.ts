@@ -1,6 +1,7 @@
 import { isPullRequestIssue, resolveLinkedIssueNumber } from "./comment-dispatch.ts";
+import { WorkflowEvent } from "../state/state-machine.ts";
 
-export const DomainEventType = {
+export const WebhookDomainEventType = {
   IssueAutopilotRequested: "issue.autopilot_requested",
   IssueCommentDispatchRequested: "issue.comment_dispatch_requested",
   ControlPause: "control.pause",
@@ -16,11 +17,29 @@ export const DomainEventType = {
   ChecksPending: "checks.pending"
 } as const;
 
+export const DomainEventType = {
+  ...WebhookDomainEventType,
+  AgentPlanSubmitted: WorkflowEvent.AgentPlanSubmitted,
+  AgentPlanReviewApproved: WorkflowEvent.AgentPlanReviewApproved,
+  AgentPlanReviewChangesRequested: WorkflowEvent.AgentPlanReviewChangesRequested,
+  AgentPlanReviewBlocked: WorkflowEvent.AgentPlanReviewBlocked,
+  AgentImplementationReady: WorkflowEvent.AgentImplementationReady,
+  PullRequestBound: WorkflowEvent.PullRequestBound,
+  AgentFixReady: WorkflowEvent.AgentFixReady,
+  MergeCompleted: WorkflowEvent.MergeCompleted,
+  IssueCloseoutCompleted: WorkflowEvent.IssueCloseoutCompleted,
+  PolicyBlock: WorkflowEvent.PolicyBlock,
+  RetryExhausted: WorkflowEvent.RetryExhausted
+} as const;
+
+export type WebhookDomainEventType = (typeof WebhookDomainEventType)[keyof typeof WebhookDomainEventType];
 export type DomainEventType = (typeof DomainEventType)[keyof typeof DomainEventType];
 
-export type DomainEvent = {
+export type DomainEventSource = "webhook" | "reconciliation" | "manual";
+
+type DomainEventBase<TSource extends DomainEventSource, TEventType extends DomainEventType> = {
   readonly schema: "agent-orchestrator.domain-event.v1";
-  readonly event_type: DomainEventType;
+  readonly event_type: TEventType;
   readonly delivery_id: string;
   readonly repo: {
     readonly owner: string;
@@ -30,10 +49,16 @@ export type DomainEvent = {
   readonly pr?: number;
   readonly head_sha?: string;
   readonly actor?: string;
-  readonly source: "webhook";
+  readonly source: TSource;
   readonly payload_ref?: string;
   readonly created_at: string;
 };
+
+export type WebhookDomainEvent = DomainEventBase<"webhook", WebhookDomainEventType>;
+
+export type WorkflowDomainEvent = DomainEventBase<"reconciliation" | "manual", WorkflowEvent>;
+
+export type DomainEvent = WebhookDomainEvent | WorkflowDomainEvent;
 
 export type NormalizeGitHubWebhookInput = {
   readonly eventName: string;
@@ -77,7 +102,7 @@ type GitHubWebhookPayload = {
   readonly sender?: { readonly login?: string };
 };
 
-export function normalizeGitHubWebhook(input: NormalizeGitHubWebhookInput): DomainEvent | undefined {
+export function normalizeGitHubWebhook(input: NormalizeGitHubWebhookInput): WebhookDomainEvent | undefined {
   const repo = extractRepo(input.payload);
   if (!repo) {
     return undefined;
@@ -129,8 +154,8 @@ export function normalizeGitHubWebhook(input: NormalizeGitHubWebhookInput): Doma
 
 function normalizeIssueEvent(
   payload: GitHubWebhookPayload,
-  base: Omit<DomainEvent, "event_type">
-): DomainEvent | undefined {
+  base: Omit<WebhookDomainEvent, "event_type">
+): WebhookDomainEvent | undefined {
   const issue = payload.issue?.number;
   if (!issue) {
     return undefined;
@@ -138,22 +163,22 @@ function normalizeIssueEvent(
 
   const label = payload.label?.name;
   if (payload.action === "labeled" && label === "agent:autopilot") {
-    return { ...base, event_type: DomainEventType.IssueAutopilotRequested, issue };
+    return { ...base, event_type: WebhookDomainEventType.IssueAutopilotRequested, issue };
   }
   if (payload.action === "opened" && issueHasAutopilotLabel(payload.issue)) {
-    return { ...base, event_type: DomainEventType.IssueAutopilotRequested, issue };
+    return { ...base, event_type: WebhookDomainEventType.IssueAutopilotRequested, issue };
   }
   if (payload.action === "labeled" && label === "agent:pause") {
-    return { ...base, event_type: DomainEventType.ControlPause, issue };
+    return { ...base, event_type: WebhookDomainEventType.ControlPause, issue };
   }
   if (payload.action === "unlabeled" && label === "agent:pause") {
-    return { ...base, event_type: DomainEventType.ControlResume, issue };
+    return { ...base, event_type: WebhookDomainEventType.ControlResume, issue };
   }
   if (payload.action === "unlabeled" && label === "agent:autopilot") {
-    return { ...base, event_type: DomainEventType.ControlAutopilotRemoved, issue };
+    return { ...base, event_type: WebhookDomainEventType.ControlAutopilotRemoved, issue };
   }
   if (payload.action === "labeled" && label === "agent:no-merge") {
-    return { ...base, event_type: DomainEventType.ControlNoMerge, issue };
+    return { ...base, event_type: WebhookDomainEventType.ControlNoMerge, issue };
   }
 
   return undefined;
@@ -161,8 +186,8 @@ function normalizeIssueEvent(
 
 function normalizeIssueCommentEvent(
   payload: GitHubWebhookPayload,
-  base: Omit<DomainEvent, "event_type">
-): DomainEvent | undefined {
+  base: Omit<WebhookDomainEvent, "event_type">
+): WebhookDomainEvent | undefined {
   if (payload.action !== "created") {
     return undefined;
   }
@@ -182,7 +207,7 @@ function normalizeIssueCommentEvent(
     }
     return {
       ...base,
-      event_type: DomainEventType.IssueCommentDispatchRequested,
+      event_type: WebhookDomainEventType.IssueCommentDispatchRequested,
       issue: linkedIssue,
       pr
     };
@@ -195,15 +220,15 @@ function normalizeIssueCommentEvent(
 
   return {
     ...base,
-    event_type: DomainEventType.IssueCommentDispatchRequested,
+    event_type: WebhookDomainEventType.IssueCommentDispatchRequested,
     issue
   };
 }
 
 function normalizePullRequestReviewCommentEvent(
   payload: GitHubWebhookPayload,
-  base: Omit<DomainEvent, "event_type">
-): DomainEvent | undefined {
+  base: Omit<WebhookDomainEvent, "event_type">
+): WebhookDomainEvent | undefined {
   if (payload.action !== "created") {
     return undefined;
   }
@@ -223,7 +248,7 @@ function normalizePullRequestReviewCommentEvent(
 
   return {
     ...base,
-    event_type: DomainEventType.IssueCommentDispatchRequested,
+    event_type: WebhookDomainEventType.IssueCommentDispatchRequested,
     issue: linkedIssue,
     pr,
     head_sha: payload.pull_request?.head?.sha
@@ -244,8 +269,8 @@ const defaultMentionTriggers = ["agentorchestratorifify"];
 
 function normalizePullRequestReviewEvent(
   payload: GitHubWebhookPayload,
-  base: Omit<DomainEvent, "event_type">
-): DomainEvent | undefined {
+  base: Omit<WebhookDomainEvent, "event_type">
+): WebhookDomainEvent | undefined {
   if (payload.action !== "submitted") {
     return undefined;
   }
@@ -280,8 +305,8 @@ function normalizePullRequestReviewEvent(
 
 function normalizePullRequestEvent(
   payload: GitHubWebhookPayload,
-  base: Omit<DomainEvent, "event_type">
-): DomainEvent | undefined {
+  base: Omit<WebhookDomainEvent, "event_type">
+): WebhookDomainEvent | undefined {
   const pr = payload.pull_request?.number;
   const headSha = payload.pull_request?.head?.sha;
 
@@ -291,7 +316,7 @@ function normalizePullRequestEvent(
 
   return {
     ...base,
-    event_type: DomainEventType.PullRequestSynchronized,
+    event_type: WebhookDomainEventType.PullRequestSynchronized,
     pr,
     head_sha: headSha
   };
@@ -299,8 +324,8 @@ function normalizePullRequestEvent(
 
 function normalizeCheckRunEvent(
   payload: GitHubWebhookPayload,
-  base: Omit<DomainEvent, "event_type">
-): DomainEvent | undefined {
+  base: Omit<WebhookDomainEvent, "event_type">
+): WebhookDomainEvent | undefined {
   const checkRun = payload.check_run;
   const headSha = checkRun?.head_sha;
   if (!checkRun || !headSha) {
@@ -320,8 +345,8 @@ function normalizeCheckRunEvent(
 
 function normalizeWorkflowRunEvent(
   payload: GitHubWebhookPayload,
-  base: Omit<DomainEvent, "event_type">
-): DomainEvent | undefined {
+  base: Omit<WebhookDomainEvent, "event_type">
+): WebhookDomainEvent | undefined {
   const workflowRun = payload.workflow_run;
   const headSha = workflowRun?.head_sha;
   if (!workflowRun || !headSha) {
@@ -341,8 +366,8 @@ function normalizeWorkflowRunEvent(
 
 function normalizeStatusEvent(
   payload: GitHubWebhookPayload,
-  base: Omit<DomainEvent, "event_type">
-): DomainEvent | undefined {
+  base: Omit<WebhookDomainEvent, "event_type">
+): WebhookDomainEvent | undefined {
   const headSha = payload.sha;
   if (!headSha) {
     return undefined;
@@ -355,31 +380,31 @@ function normalizeStatusEvent(
   };
 }
 
-function checkRunEventType(action: string | undefined, conclusion: string | null | undefined): DomainEventType {
+function checkRunEventType(action: string | undefined, conclusion: string | null | undefined): WebhookDomainEventType {
   if (action !== "completed") {
-    return DomainEventType.ChecksPending;
+    return WebhookDomainEventType.ChecksPending;
   }
 
-  return conclusion === "success" ? DomainEventType.ChecksSucceeded : DomainEventType.ChecksFailed;
+  return conclusion === "success" ? WebhookDomainEventType.ChecksSucceeded : WebhookDomainEventType.ChecksFailed;
 }
 
-function statusEventType(state: string | undefined): DomainEventType {
+function statusEventType(state: string | undefined): WebhookDomainEventType {
   if (state === "success") {
-    return DomainEventType.ChecksSucceeded;
+    return WebhookDomainEventType.ChecksSucceeded;
   }
   if (state === "failure" || state === "error") {
-    return DomainEventType.ChecksFailed;
+    return WebhookDomainEventType.ChecksFailed;
   }
-  return DomainEventType.ChecksPending;
+  return WebhookDomainEventType.ChecksPending;
 }
 
-function prReviewEventType(state: string | undefined): DomainEventType | undefined {
+function prReviewEventType(state: string | undefined): WebhookDomainEventType | undefined {
   const normalized = state?.toLowerCase();
   if (normalized === "approved") {
-    return DomainEventType.AgentPrReviewApproved;
+    return WebhookDomainEventType.AgentPrReviewApproved;
   }
   if (normalized === "changes_requested") {
-    return DomainEventType.AgentPrReviewChangesRequested;
+    return WebhookDomainEventType.AgentPrReviewChangesRequested;
   }
   if (normalized === "dismissed" || normalized === "commented") {
     return undefined;
@@ -387,7 +412,7 @@ function prReviewEventType(state: string | undefined): DomainEventType | undefin
   return undefined;
 }
 
-function extractRepo(payload: GitHubWebhookPayload): DomainEvent["repo"] | undefined {
+function extractRepo(payload: GitHubWebhookPayload): WebhookDomainEvent["repo"] | undefined {
   const owner = payload.repository?.owner?.login ?? payload.repository?.owner?.name;
   const name = payload.repository?.name;
   if (!owner || !name) {

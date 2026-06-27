@@ -389,6 +389,7 @@ export {
 } from "./webhooks/delivery-deduper.ts";
 export {
   DomainEventType,
+  WebhookDomainEventType,
   normalizeGitHubWebhook,
 } from "./webhooks/domain-event.ts";
 export type {
@@ -401,7 +402,11 @@ export type {
 } from "./webhooks/delivery-deduper.ts";
 export type {
   DomainEvent,
+  DomainEventSource,
   NormalizeGitHubWebhookInput,
+  WebhookDomainEvent,
+  WebhookDomainEventType,
+  WorkflowDomainEvent,
 } from "./webhooks/domain-event.ts";
 export type {
   RawWebhookPayload,

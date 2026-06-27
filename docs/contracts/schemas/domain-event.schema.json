@@ -2,19 +2,20 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "agent-orchestrator.domain-event.v1",
   "title": "DomainEvent",
+  "description": "Normalized domain-event envelope. Webhook source events come only from GitHub webhook intake; reconciliation and manual source events represent workflow/state-machine events reconstructed or requested outside webhook intake.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "event_type", "delivery_id", "repo", "created_at"],
+  "required": ["schema", "event_type", "delivery_id", "repo", "source", "created_at"],
   "properties": {
     "schema": { "const": "agent-orchestrator.domain-event.v1" },
     "event_type": {
+      "description": "Union of webhook-normalized events and workflow/state-machine events. Source-specific constraints below define which subset is valid for each source.",
       "enum": [
         "issue.autopilot_requested",
         "issue.comment_dispatch_requested",
         "control.pause",
         "control.resume",
         "control.autopilot_removed",
-        "control.retry",
         "control.no_merge",
         "agent.plan_submitted",
         "agent.plan_review_approved",
@@ -50,8 +51,73 @@
     "pr": { "type": "integer", "minimum": 1 },
     "head_sha": { "type": "string" },
     "actor": { "type": "string" },
-    "source": { "enum": ["webhook", "reconciliation", "manual"] },
+    "source": {
+      "description": "`webhook` is emitted only by webhook normalization. `reconciliation` and `manual` are reserved for state-machine/workflow events produced outside webhook intake.",
+      "enum": ["webhook", "reconciliation", "manual"]
+    },
     "payload_ref": { "type": "string" },
     "created_at": { "type": "string", "format": "date-time" }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "source": { "const": "webhook" } },
+        "required": ["source"]
+      },
+      "then": {
+        "properties": {
+          "event_type": {
+            "enum": [
+              "issue.autopilot_requested",
+              "issue.comment_dispatch_requested",
+              "control.pause",
+              "control.resume",
+              "control.autopilot_removed",
+              "control.no_merge",
+              "agent.pr_review_approved",
+              "agent.pr_review_changes_requested",
+              "agent.pr_review_blocked",
+              "pull_request.synchronized",
+              "checks.succeeded",
+              "checks.failed",
+              "checks.pending"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "source": { "enum": ["reconciliation", "manual"] } },
+        "required": ["source"]
+      },
+      "then": {
+        "properties": {
+          "event_type": {
+            "enum": [
+              "issue.autopilot_requested",
+              "agent.plan_submitted",
+              "agent.plan_review_approved",
+              "agent.plan_review_changes_requested",
+              "agent.plan_review_blocked",
+              "agent.implementation_ready",
+              "pull_request.bound",
+              "agent.pr_review_approved",
+              "agent.pr_review_changes_requested",
+              "agent.pr_review_blocked",
+              "checks.succeeded",
+              "checks.failed",
+              "agent.fix_ready",
+              "merge.completed",
+              "issue.closeout_completed",
+              "control.pause",
+              "control.resume",
+              "policy.block",
+              "retry.exhausted"
+            ]
+          }
+        }
+      }
+    }
+  ]
 }
