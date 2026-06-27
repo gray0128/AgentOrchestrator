@@ -1,4 +1,17 @@
 import type { RepoPolicy } from "../contracts/validation.ts";
+import { DomainEventType } from "../webhooks/domain-event.ts";
+import type { DomainEvent } from "../webhooks/domain-event.ts";
+
+export function isActorGatedDomainEvent(event: DomainEvent): boolean {
+  return (
+    event.event_type === DomainEventType.IssueAutopilotRequested ||
+    event.event_type === DomainEventType.IssueCommentDispatchRequested ||
+    event.event_type === DomainEventType.ControlPause ||
+    event.event_type === DomainEventType.ControlResume ||
+    event.event_type === DomainEventType.ControlNoMerge ||
+    event.event_type === DomainEventType.ControlAutopilotRemoved
+  );
+}
 
 export function isActorAllowed(
   actor: string | undefined,

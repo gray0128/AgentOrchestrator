@@ -48,7 +48,7 @@ import {
   type RuntimeLifecycleWorkspace,
 } from "./orchestrator/runtime-lifecycle.ts";
 import { advanceWebhookEvent } from "./orchestrator/webhook-runtime.ts";
-import { shouldDiscardActor } from "./policy/actor-gate.ts";
+import { isActorGatedDomainEvent, shouldDiscardActor } from "./policy/actor-gate.ts";
 import { loadRepoPolicy } from "./policy/repo-policy-loader.ts";
 import type { LoadedRepoPolicy } from "./policy/repo-policy-loader.ts";
 import { buildReconciliationDryRunReport } from "./reconciliation/dry-run.ts";
@@ -1406,13 +1406,6 @@ function extractRepoFromPayload(payload: unknown): {
   const repoName =
     typeof repository.name === "string" ? repository.name : undefined;
   return { repoOwner, repoName };
-}
-
-function isActorGatedDomainEvent(event: DomainEvent): boolean {
-  return (
-    event.event_type === DomainEventType.IssueAutopilotRequested ||
-    event.event_type === DomainEventType.IssueCommentDispatchRequested
-  );
 }
 
 function isActorDiscardedByPolicy(

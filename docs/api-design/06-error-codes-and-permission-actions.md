@@ -45,10 +45,10 @@
 
 | Action | Actor |
 | --- | --- |
-| `issue.autopilot.request` | Human issue author or allowed label actor. |
-| `issue.control.pause` | Allowed collaborator. |
-| `issue.control.resume` | Allowed collaborator. |
-| `issue.control.retry` | Allowed collaborator. |
+| `issue.autopilot.request` | Actor in `autopilot.allowed_actors` when configured; otherwise any GitHub actor with label write permission. |
+| `issue.control.pause` | Actor in `autopilot.allowed_actors` when configured for control-label webhooks; label write still requires GitHub permission. |
+| `issue.control.resume` | Actor in `autopilot.allowed_actors` when configured for control-label webhooks; label write still requires GitHub permission. |
+| `issue.control.no_merge` | Actor in `autopilot.allowed_actors` when configured for control-label webhooks; label write still requires GitHub permission. |
 | `repo.policy.read` | Orchestrator. |
 | `github.comment.write` | Orchestrator GitHub App. |
 | `github.label.write` | Orchestrator GitHub App. |
