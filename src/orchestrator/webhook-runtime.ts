@@ -11,6 +11,7 @@ import type { IdempotentActionResult, StateDatabase, WorkflowRunSnapshot } from 
 import { WorkflowState } from "../state/state-machine.ts";
 import { DomainEventType } from "../webhooks/domain-event.ts";
 import type { DomainEvent } from "../webhooks/domain-event.ts";
+import { createIdempotencyKey } from "./idempotency-key.ts";
 import { renderPlanningStartedComment, writePlanningStartedComment } from "./planning-status.ts";
 
 export type AdvanceWebhookEventInput = {
@@ -73,7 +74,7 @@ export async function advanceWebhookEvent(input: AdvanceWebhookEventInput): Prom
       expectedHeadSha: null,
       nextState: WorkflowState.Planning,
       nextHeadSha: null,
-      idempotencyKey: `${runId}:transition:${input.event.delivery_id}:planning`,
+      idempotencyKey: createIdempotencyKey(runId, "transition", input.event.delivery_id, "planning"),
       eventType: input.event.event_type,
       reason: "Autopilot label accepted from signed webhook.",
       now
@@ -140,7 +141,7 @@ function ensureWorkflowRun(
     repoName: input.event.repo.name,
     issueNumber: input.event.issue,
     state: WorkflowState.New,
-    idempotencyKey: `${input.runId}:create:${input.event.delivery_id}`,
+    idempotencyKey: createIdempotencyKey(input.runId, "create", input.event.delivery_id),
     now: input.now
   });
 
@@ -167,7 +168,7 @@ function recordPlanningStartedAction(
     policySummary: input.policySummary
   });
   return recordIdempotentAction(database, {
-    idempotencyKey: `${input.runId}:planning:none:create-planning-started-comment`,
+    idempotencyKey: createIdempotencyKey(input.runId, "planning", "none", "create-planning-started-comment"),
     runId: input.runId,
     actionType: "create_issue_comment",
     targetType: "issue",

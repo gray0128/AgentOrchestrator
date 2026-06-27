@@ -3,6 +3,7 @@ import { createRequestHash } from "../github/request-hash.ts";
 import { syncStateLabels } from "../state/labels.ts";
 import type { WorkflowState as WorkflowStateValue } from "../state/state-machine.ts";
 import type { StateDatabase } from "../state/sqlite-store.ts";
+import { createIdempotencyKey } from "./idempotency-key.ts";
 import { executeMaterialGitHubWrite, replayGitHubWrite } from "./idempotent-github-write.ts";
 
 export type WorkflowLabelState = {
@@ -64,7 +65,7 @@ export async function syncWorkflowStateLabels(
     return;
   }
 
-  const idempotencyKey = `${context.runId}:state-labels:${transitionKey}`;
+  const idempotencyKey = createIdempotencyKey(context.runId, "state-labels", ...transitionKey.split(":"));
   const requestHash = createRequestHash({ runId: context.runId, labels: synced.labels });
   await executeMaterialGitHubWrite(
     {

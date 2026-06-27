@@ -2,6 +2,7 @@ import { createRequestHash } from "../github/request-hash.ts";
 import type { GitHubApiAdapter, IssueCommentWriteResult } from "../github/api.ts";
 import { DomainEventType } from "../webhooks/domain-event.ts";
 import type { DomainEvent } from "../webhooks/domain-event.ts";
+import { createIdempotencyKey } from "./idempotency-key.ts";
 
 export type PlanningStartedCommentInput = {
   readonly runId: string;
@@ -32,7 +33,7 @@ export async function writePlanningStartedComment(
     issue: input.event.issue,
     policySummary: input.policySummary
   });
-  const idempotencyKey = `${input.runId}:planning:none:create-planning-started-comment`;
+  const idempotencyKey = createIdempotencyKey(input.runId, "planning", "none", "create-planning-started-comment");
   const requestHash = createRequestHash({
     repo: input.event.repo,
     issue: input.event.issue,

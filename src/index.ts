@@ -123,6 +123,7 @@ export {
   renderAgentAttribution,
 } from "./orchestrator/agent-attribution.ts";
 export { runMockedDispatchSmoke, runMockedEndToEndSmoke } from "./orchestrator/e2e-smoke.ts";
+export { createIdempotencyKey } from "./orchestrator/idempotency-key.ts";
 export { runIssueLifecycle, runIssueLifecycleFromStep } from "./orchestrator/runtime-lifecycle.ts";
 export { dispatchIssueWork, fallbackTriage } from "./orchestrator/issue-dispatch.ts";
 export { mapStateToNextStep, runTriage } from "./orchestrator/triage.ts";
