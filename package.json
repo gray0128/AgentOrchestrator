@@ -12,6 +12,7 @@
   "scripts": {
     "build:sea": "node tools/build/build-sea.mjs",
     "check": "npm run schema:check && npm run format:check && npm run test:unit",
+    "coverage": "node tools/run-coverage.mjs",
     "cli": "node --experimental-strip-types src/cli.ts",
     "format": "node tools/format-check.mjs --write",
     "format:check": "node tools/format-check.mjs",
