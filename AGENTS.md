@@ -84,7 +84,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - PR review must follow the `pr-review` skill: bind the review to the current PR head SHA, read live PR comments/reviews/checks, inspect the diff and affected callers, treat historical approvals/checks on older SHAs as stale, and publish an evidence-bound review unless the user explicitly asks for chat-only output.
 - Do not merge a PR unless the user explicitly authorizes the merge or the orchestrator policy-controlled workflow requires it.
 - Before merging, refresh the PR state and exact head SHA, confirm required checks and review requirements are satisfied on that SHA, verify unresolved blocking comments are addressed, and re-review if new commits landed after the latest review.
-- Merge through GitHub-native tooling/API, then verify the target branch state, linked issue status, and any required closeout comment. Delete the source branch only when it is safe and expected.
+- Merge through GitHub-native tooling/API, then verify the target branch state, linked issue status, and any required closeout comment. Delete the remote source branch only when it is safe and expected. After a successful merge, switch back to the target branch, update it from remote, and delete the local PR branch or worktree once it is no longer needed.
 
 ## Document Priority
 
