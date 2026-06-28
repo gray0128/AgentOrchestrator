@@ -70,7 +70,7 @@ jobs:
           AO_PLATFORM: ${{ matrix.platform }}
           AO_ARCH: ${{ matrix.arch }}
           AO_SEA_OUTPUT: dist/${{ matrix.executable }}
-          NODE_SEA_NODE: ${{ env.NODE_SEA_NODE }}
+          NODE_SEA_NODE: ${{ matrix.sea_node_arch == 'x64' && env.NODE_SEA_NODE || '' }}
         run: node tools/build/build-sea.mjs
 
       - name: Smoke test release binary

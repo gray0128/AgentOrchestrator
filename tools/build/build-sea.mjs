@@ -13,7 +13,7 @@ const seaConfigPath = join(distDir, "sea-config.json");
 
 const platform = process.env.AO_PLATFORM ?? process.platform;
 const arch = process.env.AO_ARCH ?? process.arch;
-const nodeBinary = process.env.NODE_SEA_NODE ?? process.execPath;
+const nodeBinary = process.env.NODE_SEA_NODE?.trim() || process.execPath;
 const outputName =
   process.env.AO_SEA_OUTPUT ??
   (platform === "win32" ? join(distDir, "ao.exe") : join(distDir, "ao"));
