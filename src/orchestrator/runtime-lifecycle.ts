@@ -1,18 +1,15 @@
 import { AgentRole } from "../agents/adapter.ts";
 import type {
   AgentAdapter,
-  AgentProcessMetadata,
   ImplementationResult,
-  PlanResult,
   ReviewerVerdict,
   TaskEnvelope,
   TriageNextStep
 } from "../agents/adapter.ts";
-import type { FixResult, RepoPolicy } from "../contracts/validation.ts";
+import type { FixResult } from "../contracts/validation.ts";
 import { validateFixResult } from "../contracts/validation.ts";
 import { ErrorCode, OrchestratorError } from "../errors.ts";
 import type { ErrorCode as ErrorCodeValue } from "../errors.ts";
-import type { GitHubApiAdapter } from "../github/api.ts";
 import { createRequestHash } from "../github/request-hash.ts";
 import { evaluatePathPolicy, resolvePathPolicyBlock } from "../policy/path-policy.ts";
 import type { PathPolicyBlock } from "../policy/path-policy.ts";
@@ -25,18 +22,12 @@ import {
 } from "../policy/prompt-injection.ts";
 import type { PromptInjectionBlock } from "../policy/prompt-injection.ts";
 import {
-  casUpdateRunState,
   getWorkflowRunSnapshot,
-  recordIdempotentAction,
   repairWorkflowRunFromArtifacts
 } from "../state/sqlite-store.ts";
-import type { StateDatabase, WorkflowRunSnapshot } from "../state/sqlite-store.ts";
+import type { StateDatabase } from "../state/sqlite-store.ts";
 import { WorkflowEvent, WorkflowState } from "../state/state-machine.ts";
-import type { WorkflowState as WorkflowStateValue } from "../state/state-machine.ts";
-import type { DomainEvent } from "../webhooks/domain-event.ts";
 import { attributionFromMetadata } from "./agent-attribution.ts";
-import { renderFinalSummary } from "./closeout.ts";
-import { evaluateMergeGate, resolveGithubMergeable } from "./merge-gate.ts";
 import { renderFixComment, renderPlanComment, renderPlanReviewComment, renderPrReviewComment } from "./plan-comments.ts";
 import { aggregateChecks, decideFixLoop, mapPrReviewVerdictToEvent } from "./pr-gate.ts";
 import type { CheckAggregationResult } from "./pr-gate.ts";
@@ -46,9 +37,7 @@ import type { AdvanceWebhookEventResult } from "./webhook-runtime.ts";
 import {
   executeMaterialGitHubWrite,
   replayCommitChanges,
-  replayGitHubWrite,
-  replayIssueCommentWrite,
-  replayMergePullRequest
+  replayGitHubWrite
 } from "./idempotent-github-write.ts";
 import { createIdempotencyKey } from "./idempotency-key.ts";
 import { buildBlockedHandling } from "./workflow-control.ts";
@@ -57,7 +46,6 @@ import {
   syncWorkflowStateLabels,
   type WorkflowLabelSyncContext
 } from "./state-label-sync.ts";
-import type { GitHubArtifactReader } from "../reconciliation/github-artifacts.ts";
 import { loadResumeContext } from "../reconciliation/resume-context.ts";
 import type { ResumeArtifactRequirement, ResumeContext } from "../reconciliation/resume-context.ts";
 import {
@@ -67,65 +55,34 @@ import {
   readDiffFileContents,
   validateControlledWorkspace
 } from "../workspace/manager.ts";
+import { fixerEnvelope, implementerEnvelope, plannerEnvelope, planReviewerEnvelope, prReviewerEnvelope } from "./runtime-lifecycle/envelopes.ts";
+import {
+  recordCompletedAction,
+  safeTransition,
+  transition,
+  transitionToFailed,
+  transitionWithFixRound
+} from "./runtime-lifecycle/transitions.ts";
+import { finishMergeAndCloseout } from "./runtime-lifecycle/merge-closeout.ts";
+import type {
+  AgentRunOutput,
+  ExtractAgentResult,
+  RunIssueLifecycleInput,
+  RunIssueLifecycleResult,
+  RuntimeLifecycleAgents,
+  RuntimeLifecycleIssue,
+  RuntimeLifecycleRepo,
+  RuntimeLifecycleWorkspace
+} from "./runtime-lifecycle/types.ts";
 
-export type RuntimeLifecycleAgents = {
-  readonly planner: AgentAdapter<typeof AgentRole.Planner>;
-  readonly planReviewer: AgentAdapter<typeof AgentRole.PlanReviewer>;
-  readonly implementer: AgentAdapter<typeof AgentRole.Implementer>;
-  readonly prReviewer: AgentAdapter<typeof AgentRole.PrReviewer>;
-  readonly prReviewers?: readonly AgentAdapter<typeof AgentRole.PrReviewer>[];
-};
-
-export type RuntimeLifecycleRepo = {
-  readonly owner: string;
-  readonly name: string;
-  readonly default_branch: string;
-};
-
-export type RuntimeLifecycleIssue = {
-  readonly number: number;
-  readonly title: string;
-  readonly body: string;
-  readonly author: string;
-  readonly labels: readonly string[];
-};
-
-export type RuntimeLifecycleWorkspace = {
-  readonly path: string;
-  readonly branch: string;
-  readonly base_sha?: string;
-};
-
-export type RunIssueLifecycleInput = {
-  readonly database: StateDatabase;
-  readonly github: GitHubApiAdapter;
-  readonly artifactReader?: GitHubArtifactReader;
-  readonly agents: RuntimeLifecycleAgents;
-  readonly event: DomainEvent;
-  readonly repo: RuntimeLifecycleRepo;
-  readonly issue: RuntimeLifecycleIssue;
-  readonly workspace: RuntimeLifecycleWorkspace;
-  readonly workspaceRoot: string;
-  readonly sourceRepoPath: string;
-  readonly policy: RepoPolicy;
-  readonly policySummary: string;
-  readonly now?: Date;
-};
-
-export type RunIssueLifecycleResult = {
-  readonly runId: string;
-  readonly issue: number;
-  readonly pr: number;
-  readonly headSha: string;
-  readonly mergeSha?: string;
-  readonly snapshot: WorkflowRunSnapshot;
-};
-
-type ExtractAgentResult<Role extends AgentRole> = Role extends typeof AgentRole.Planner
-  ? PlanResult
-  : Role extends typeof AgentRole.Implementer
-    ? ImplementationResult
-    : ReviewerVerdict;
+export type {
+  RunIssueLifecycleInput,
+  RunIssueLifecycleResult,
+  RuntimeLifecycleAgents,
+  RuntimeLifecycleIssue,
+  RuntimeLifecycleRepo,
+  RuntimeLifecycleWorkspace
+} from "./runtime-lifecycle/types.ts";
 
 export async function runIssueLifecycle(input: RunIssueLifecycleInput): Promise<RunIssueLifecycleResult> {
   const now = input.now ?? new Date();
@@ -885,52 +842,9 @@ function buildFixResult(input: {
   };
 }
 
-function fixerEnvelope(
-  input: RunIssueLifecycleInput,
-  runId: string,
-  pr: number,
-  preparedWorkspace: { readonly path: string; readonly branch: string; readonly baseSha: string },
-  now: Date
-): TaskEnvelope {
-  return {
-    ...baseEnvelope(
-      input,
-      runId,
-      AgentRole.Implementer,
-      { commit: true, changed_files: true, test_summary: true },
-      now,
-      {
-        path: preparedWorkspace.path,
-        branch: preparedWorkspace.branch,
-        base_sha: preparedWorkspace.baseSha,
-        head_sha: preparedWorkspace.baseSha
-      }
-    ),
-    pr: {
-      number: pr,
-      title: input.issue.title,
-      body: "PR body",
-      head_sha: preparedWorkspace.baseSha,
-      base_branch: input.repo.default_branch,
-      head_branch: preparedWorkspace.branch
-    },
-    dispatch: {
-      current_state: WorkflowState.Fixing,
-      trigger: "mention",
-      pr_number: pr,
-      head_sha: preparedWorkspace.baseSha
-    }
-  };
-}
-
-type AgentRunOutput<Role extends AgentRole> = {
-  readonly result: ExtractAgentResult<Role>;
-  readonly metadata: AgentProcessMetadata;
-};
-
 async function runAgent<Role extends AgentRole>(
   adapter: AgentAdapter<Role>,
-  envelope: TaskEnvelope,
+  envelope: Parameters<AgentAdapter<Role>["run"]>[0],
   prompt: string,
   workspacePath: string
 ): Promise<AgentRunOutput<Role>> {
@@ -978,102 +892,6 @@ async function guardPromptInjection(
   if (block) {
     await blockRunForPromptInjection(input, runId, block, currentState, headSha, now);
   }
-}
-
-function plannerEnvelope(input: RunIssueLifecycleInput, runId: string, now: Date): TaskEnvelope {
-  return baseEnvelope(input, runId, AgentRole.Planner, { plan: true }, now);
-}
-
-function planReviewerEnvelope(input: RunIssueLifecycleInput, runId: string, plan: PlanResult, planCommentUrl: string, now: Date): TaskEnvelope {
-  return {
-    ...baseEnvelope(input, runId, AgentRole.PlanReviewer, { review: true }, now),
-    plan: {
-      comment_url: planCommentUrl,
-      summary: plan.summary,
-      verdict: "APPROVED"
-    }
-  };
-}
-
-function implementerEnvelope(
-  input: RunIssueLifecycleInput,
-  runId: string,
-  plan: PlanResult,
-  planCommentUrl: string,
-  preparedWorkspace: { readonly path: string; readonly branch: string; readonly baseSha: string },
-  now: Date
-): TaskEnvelope {
-  return {
-    ...baseEnvelope(
-      input,
-      runId,
-      AgentRole.Implementer,
-      { commit: true, pr_body: true, changed_files: true, test_summary: true },
-      now,
-      {
-        path: preparedWorkspace.path,
-        branch: preparedWorkspace.branch,
-        base_sha: preparedWorkspace.baseSha
-      }
-    ),
-    plan: {
-      comment_url: planCommentUrl,
-      summary: plan.summary,
-      verdict: "APPROVED"
-    }
-  };
-}
-
-function prReviewerEnvelope(
-  input: RunIssueLifecycleInput,
-  runId: string,
-  pr: number,
-  headSha: string,
-  branch: string,
-  now: Date
-): TaskEnvelope {
-  return {
-    ...baseEnvelope(input, runId, AgentRole.PrReviewer, { review: true }, now, {
-      path: input.workspace.path,
-      branch
-    }),
-    pr: {
-      number: pr,
-      title: input.issue.title,
-      body: "PR body",
-      head_sha: headSha,
-      base_branch: input.repo.default_branch,
-      head_branch: branch
-    }
-  };
-}
-
-function baseEnvelope(
-  input: RunIssueLifecycleInput,
-  runId: string,
-  role: AgentRole,
-  expectedOutputs: TaskEnvelope["expected_outputs"],
-  now: Date,
-  workspace: RuntimeLifecycleWorkspace = input.workspace
-): TaskEnvelope {
-  return {
-    schema: "agent-orchestrator.task-envelope.v1",
-    role,
-    run_id: runId,
-    repo: input.repo,
-    issue: input.issue,
-    workspace,
-    policy: {
-      allow_write: input.policy.paths.allow,
-      deny_write: input.policy.paths.deny,
-      high_risk: input.policy.paths.high_risk,
-      required_tests: input.policy.checks.required,
-      network: "deny",
-      max_fix_rounds: input.policy.review.max_fix_rounds
-    },
-    expected_outputs: expectedOutputs,
-    created_at: now.toISOString()
-  };
 }
 
 async function resolveResumeContext(
@@ -1313,142 +1131,6 @@ async function blockRunForPathPolicy(
   throw new OrchestratorError(errorCode, block.explanation);
 }
 
-async function transition(
-  database: StateDatabase,
-  runId: string,
-  expectedState: string,
-  nextState: string,
-  headSha: string | null,
-  eventType: string,
-  now: Date,
-  labelSync?: WorkflowLabelSyncContext
-): Promise<void> {
-  const updated = casUpdateRunState(database, {
-    runId,
-    expectedState,
-    expectedHeadSha: headSha,
-    nextState,
-    nextHeadSha: headSha,
-    idempotencyKey: createIdempotencyKey(runId, "transition", eventType, nextState),
-    eventType,
-    reason: "End-to-end lifecycle progression.",
-    now
-  });
-  if (!updated) {
-    throw new OrchestratorError(
-      ErrorCode.WorkflowStateConflict,
-      `Lifecycle transition failed: ${expectedState} -> ${nextState}`
-    );
-  }
-  if (labelSync) {
-    await syncWorkflowStateLabels(labelSync, nextState as WorkflowStateValue, `${eventType}:${nextState}`);
-  }
-}
-
-async function transitionWithFixRound(
-  database: StateDatabase,
-  runId: string,
-  expectedState: string,
-  nextState: string,
-  expectedHeadSha: string | null,
-  nextHeadSha: string | null,
-  nextFixRound: number,
-  eventType: string,
-  now: Date,
-  labelSync?: WorkflowLabelSyncContext
-): Promise<void> {
-  const updated = casUpdateRunState(database, {
-    runId,
-    expectedState,
-    expectedHeadSha,
-    nextState,
-    nextHeadSha,
-    nextFixRound,
-    idempotencyKey: createIdempotencyKey(
-      runId,
-      "transition",
-      eventType,
-      nextState,
-      String(nextFixRound),
-      nextHeadSha ?? "none"
-    ),
-    eventType,
-    reason: "Fix loop progression.",
-    now
-  });
-  if (!updated) {
-    throw new OrchestratorError(
-      ErrorCode.WorkflowStateConflict,
-      `Fix loop transition failed: ${expectedState} -> ${nextState}`
-    );
-  }
-  if (labelSync) {
-    await syncWorkflowStateLabels(
-      labelSync,
-      nextState as WorkflowStateValue,
-      `${eventType}:${nextState}:${nextFixRound}`
-    );
-  }
-}
-
-async function transitionToFailed(
-  database: StateDatabase,
-  runId: string,
-  expectedState: string,
-  headSha: string | null,
-  now: Date,
-  labelSync?: WorkflowLabelSyncContext
-): Promise<void> {
-  const updated = casUpdateRunState(database, {
-    runId,
-    expectedState,
-    expectedHeadSha: headSha,
-    nextState: WorkflowState.Failed,
-    nextHeadSha: headSha,
-    idempotencyKey: createIdempotencyKey(runId, "transition", WorkflowEvent.RetryExhausted, WorkflowState.Failed),
-    eventType: WorkflowEvent.RetryExhausted,
-    reason: "Fix rounds exhausted.",
-    now
-  });
-  if (!updated) {
-    const snapshot = getWorkflowRunSnapshot(database, { runId });
-    if (snapshot?.run.state !== WorkflowState.Failed) {
-      throw new OrchestratorError(
-        ErrorCode.WorkflowStateConflict,
-        `Failed transition could not be applied from ${expectedState}`
-      );
-    }
-  }
-  if (labelSync) {
-    await syncWorkflowStateLabels(labelSync, WorkflowState.Failed, `${WorkflowEvent.RetryExhausted}:${WorkflowState.Failed}`);
-  }
-}
-
-function recordCompletedAction(
-  database: StateDatabase,
-  runId: string,
-  actionType: string,
-  targetType: string,
-  targetId: string,
-  responseRef: string,
-  hashValue: unknown,
-  now: Date,
-  idempotencyKey?: string
-): void {
-  recordIdempotentAction(database, {
-    idempotencyKey:
-      idempotencyKey ?? `${runId}:runtime:${actionType}:${targetType}:${targetId}:${responseRef}`,
-    runId,
-    actionType,
-    targetType,
-    targetId,
-    requestHash: createRequestHash(hashValue),
-    responseRef,
-    status: "completed",
-    now
-  });
-}
-
 function extractPrNumber(responseRef: string): number | undefined {
   const match = responseRef.match(/(?:pull\/|pr:)([0-9]+)/);
   return match ? Number(match[1]) : undefined;
@@ -1617,41 +1299,6 @@ export async function runIssueLifecycleFromStep(
   throw new OrchestratorError(ErrorCode.LocalQueryInvalid, `Unsupported resume step: ${startStep}`);
 }
 
-async function safeTransition(
-  database: StateDatabase,
-  runId: string,
-  expectedState: string,
-  nextState: string,
-  headSha: string | null,
-  eventType: string,
-  now: Date,
-  labelSync?: WorkflowLabelSyncContext
-): Promise<void> {
-  const updated = casUpdateRunState(database, {
-    runId,
-    expectedState,
-    expectedHeadSha: headSha,
-    nextState,
-    nextHeadSha: headSha,
-    idempotencyKey: createIdempotencyKey(runId, "transition", eventType, nextState, String(now.getTime())),
-    eventType,
-    reason: "Resume lifecycle progression.",
-    now
-  });
-  if (!updated) {
-    const snapshot = getWorkflowRunSnapshot(database, { runId });
-    if (snapshot?.run.state !== nextState) {
-      throw new OrchestratorError(
-        ErrorCode.WorkflowStateConflict,
-        `Resume transition failed: ${expectedState} -> ${nextState}`
-      );
-    }
-  }
-  if (labelSync) {
-    await syncWorkflowStateLabels(labelSync, nextState as WorkflowStateValue, `${eventType}:${nextState}`);
-  }
-}
-
 async function finishCiMergeAndCloseout(
   input: RunIssueLifecycleInput,
   runId: string,
@@ -1791,241 +1438,6 @@ function waitingForChecksResult(
   };
 }
 
-function waitingForMergeGateResult(
-  input: RunIssueLifecycleInput,
-  runId: string,
-  pr: number,
-  headSha: string
-): RunIssueLifecycleResult {
-  const snapshot = requireWorkflowRunSnapshot(input.database, runId, "resume");
-  return {
-    runId,
-    issue: input.issue.number,
-    pr,
-    headSha,
-    snapshot
-  };
-}
-
-async function finishMergeAndCloseout(
-  input: RunIssueLifecycleInput,
-  runId: string,
-  pr: number,
-  headSha: string,
-  planReview: ReviewerVerdict,
-  prReviews: readonly ReviewerVerdict[],
-  implementation: ImplementationResult,
-  labelSync: WorkflowLabelSyncContext,
-  now: Date
-): Promise<RunIssueLifecycleResult> {
-  const requiredChecks = input.policy.checks.required;
-  const prContext = await input.github.readPullRequestContext({
-    repo: input.event.repo,
-    pr,
-    issue: input.issue.number,
-    requiredChecks
-  });
-  recordCompletedAction(
-    input.database,
-    runId,
-    "read_pull_request_context",
-    "pull_request",
-    String(pr),
-    prContext.responseRef,
-    { runId, pr, headSha, prContext },
-    now
-  );
-  if (prContext.headSha !== headSha) {
-    throw new OrchestratorError(
-      ErrorCode.StaleHeadSha,
-      `PR head ${prContext.headSha} no longer matches run head ${headSha}`
-    );
-  }
-
-  const checkAggregation = aggregateChecks({
-    currentHeadSha: headSha,
-    requiredChecks,
-    skippedCountsAsSuccess: input.policy.checks.skipped_counts_as_success,
-    neutralCountsAsSuccess: input.policy.checks.neutral_counts_as_success,
-    checks: prContext.checks.checks.map((check) => ({
-      name: check.name,
-      headSha: prContext.checks.headSha,
-      conclusion: check.conclusion
-    }))
-  });
-  if (checkAggregation.event === "checks.pending") {
-    return waitingForMergeGateResult(input, runId, pr, headSha);
-  }
-  if (checkAggregation.event === WorkflowEvent.ChecksFailed) {
-    throw new OrchestratorError(ErrorCode.MergeGateBlocked, formatCheckFailureMessage(checkAggregation, "Merge gate blocked by failed checks"));
-  }
-
-  const mergeability = resolveGithubMergeable(prContext.mergeable, prContext.mergeableState);
-  const requiredPrApprovals = input.policy.review.required_pr_approvals ?? (input.policy.review.require_pr_review ? 1 : 0);
-  const mergeDecision = evaluateMergeGate({
-    runId,
-    issue: input.issue.number,
-    pr,
-    currentHeadSha: headSha,
-    labels: prContext.labels.length > 0 ? prContext.labels : input.issue.labels,
-    risk: implementation.risk,
-    allowedRisks: input.policy.merge.auto_merge.allowed_risks,
-    blockedLabels: input.policy.merge.auto_merge.blocked_labels,
-    planReviewCurrent: planReview.verdict === "APPROVED",
-    prReviewHeadSha: prReviews[0]?.head_sha ?? headSha,
-    approvedPrReviewCount: Math.max(prReviews.length, prContext.approvedReviewCount),
-    requiredPrApprovals,
-    checksSucceeded: true,
-    githubMergeable: mergeability === true,
-    mergeMethod: input.policy.merge.default_method,
-    now
-  });
-  if (mergeDecision.decision === "WAIT") {
-    return waitingForMergeGateResult(input, runId, pr, headSha);
-  }
-  assertMergeAllowed(mergeDecision);
-  const mergeKey = createIdempotencyKey(runId, "merge", "pull-request");
-  const mergeHash = createRequestHash({ runId, mergeDecision });
-  const merge = await executeMaterialGitHubWrite(
-    {
-      database: input.database,
-      runId,
-      actionType: "merge_pull_request",
-      targetType: "pull_request",
-      targetId: String(pr),
-      idempotencyKey: mergeKey,
-      requestHash: mergeHash,
-      hashValue: { runId, mergeDecision },
-      now
-    },
-    {
-      execute: () =>
-        input.github.mergePullRequest({
-          repo: input.event.repo,
-          pr,
-          expectedHeadSha: headSha,
-          method: mergeDecision.merge_method,
-          idempotencyKey: mergeKey,
-          requestHash: mergeHash
-        }),
-      responseRef: (result) => result.mergeSha,
-      replay: replayMergePullRequest
-    }
-  );
-  const beforeMerged = getWorkflowRunSnapshot(input.database, { runId });
-  await safeTransition(
-    input.database,
-    runId,
-    beforeMerged?.run.state ?? WorkflowState.MergeReady,
-    WorkflowState.Merged,
-    headSha,
-    WorkflowEvent.MergeCompleted,
-    now,
-    labelSync
-  );
-
-  const deleteBranchKey = createIdempotencyKey(runId, "merge", "delete-branch");
-  const deleteBranchHash = createRequestHash({ runId, branch: implementation.branch, mergeSha: merge.mergeSha });
-  await executeMaterialGitHubWrite(
-    {
-      database: input.database,
-      runId,
-      actionType: "delete_branch",
-      targetType: "branch",
-      targetId: implementation.branch,
-      idempotencyKey: deleteBranchKey,
-      requestHash: deleteBranchHash,
-      hashValue: { runId, branch: implementation.branch, mergeSha: merge.mergeSha },
-      now
-    },
-    {
-      execute: () =>
-        input.github.deleteBranch({
-          repo: input.event.repo,
-          branch: implementation.branch,
-          afterMergeSha: merge.mergeSha,
-          idempotencyKey: deleteBranchKey,
-          requestHash: deleteBranchHash
-        }),
-      responseRef: (result) => result.responseRef,
-      replay: replayGitHubWrite
-    }
-  );
-  const finalSummary = renderFinalSummary({
-    runId,
-    issue: input.issue.number,
-    pr,
-    headSha,
-    mergeSha: merge.mergeSha,
-    tests: input.policy.checks.required.join(", "),
-    risk: implementation.risk
-  });
-  const finalSummaryKey = createIdempotencyKey(runId, "merge", "final-summary");
-  const finalSummaryHash = createRequestHash({ runId, finalSummary });
-  await executeMaterialGitHubWrite(
-    {
-      database: input.database,
-      runId,
-      actionType: "create_issue_comment",
-      targetType: "issue",
-      targetId: String(input.issue.number),
-      idempotencyKey: finalSummaryKey,
-      requestHash: finalSummaryHash,
-      hashValue: { runId, finalSummary },
-      now
-    },
-    {
-      execute: () =>
-        input.github.createOrUpdateIssueComment({
-          repo: input.event.repo,
-          issue: input.issue.number,
-          body: finalSummary,
-          idempotencyKey: finalSummaryKey,
-          requestHash: finalSummaryHash
-        }),
-      responseRef: (result) => result.responseRef,
-      replay: replayIssueCommentWrite
-    }
-  );
-  const closeIssueKey = createIdempotencyKey(runId, "merge", "close-issue");
-  const closeIssueHash = createRequestHash({ runId, issue: input.issue.number });
-  await executeMaterialGitHubWrite(
-    {
-      database: input.database,
-      runId,
-      actionType: "close_issue",
-      targetType: "issue",
-      targetId: String(input.issue.number),
-      idempotencyKey: closeIssueKey,
-      requestHash: closeIssueHash,
-      hashValue: { runId, issue: input.issue.number },
-      now
-    },
-    {
-      execute: () =>
-        input.github.closeIssue({
-          repo: input.event.repo,
-          issue: input.issue.number,
-          idempotencyKey: closeIssueKey,
-          requestHash: closeIssueHash
-        }),
-      responseRef: (result) => result.responseRef,
-      replay: replayGitHubWrite
-    }
-  );
-  await transition(input.database, runId, WorkflowState.Merged, WorkflowState.IssueClosed, headSha, WorkflowEvent.IssueCloseoutCompleted, now, labelSync);
-
-  const resultSnapshot = requireWorkflowRunSnapshot(input.database, runId, "closeout");
-  return {
-    runId,
-    issue: input.issue.number,
-    pr,
-    headSha,
-    mergeSha: merge.mergeSha,
-    snapshot: resultSnapshot
-  };
-}
-
 function throwPlanningStartError(reason: Extract<AdvanceWebhookEventResult, { readonly advanced: false }>["reason"]): never {
   const message = `Lifecycle failed to start planning: ${reason}`;
   switch (reason) {
@@ -2049,17 +1461,6 @@ function formatCheckFailureMessage(checkAggregation: CheckAggregationResult, pre
   ].filter((detail): detail is string => detail !== undefined);
 
   return details.length > 0 ? `${prefix} (${details.join("; ")})` : prefix;
-}
-
-function assertMergeAllowed(mergeDecision: ReturnType<typeof evaluateMergeGate>): void {
-  if (mergeDecision.decision === "MERGE_ALLOWED" && mergeDecision.merge_method) {
-    return;
-  }
-
-  throw new OrchestratorError(
-    ErrorCode.MergeGateBlocked,
-    `Merge gate rejected: ${mergeDecision.reasons.join(", ")}`
-  );
 }
 
 function requireWorkflowRunSnapshot(
