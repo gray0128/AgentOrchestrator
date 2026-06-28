@@ -5,8 +5,7 @@ const files = readdirSync("test")
   .filter(
     (name) =>
       name.endsWith(".test.ts") &&
-      name !== "e2e-smoke.test.ts" &&
-      name !== "ui-browser-smoke.test.ts",
+      name !== "e2e-smoke.test.ts",
   )
   .sort()
   .map((name) => `test/${name}`);

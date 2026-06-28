@@ -11,7 +11,6 @@ test("public entrypoint exports only stable operator-facing API", () => {
     "defaultUiPort",
     "getRuntimeInfo",
     "runCli",
-    "runUiBrowserSmoke",
     "startServeRuntime",
     "startUiRuntime",
   ]);
