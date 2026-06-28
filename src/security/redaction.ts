@@ -17,13 +17,15 @@ export function redactSecretLikeValues(value: string): string {
   return secretPatterns.reduce((current, pattern) => current.replace(pattern, redactMatch), value);
 }
 
-export function sanitizeMarkdown(value: string): string {
+export function redactMarkdownSecrets(value: string): string {
   return redactSecretLikeValues(value);
 }
 
+export const sanitizeMarkdown = redactMarkdownSecrets;
+
 export function boundMarkdown(input: BoundMarkdownInput): string {
   const maxLength = input.maxLength ?? defaultMaxMarkdownLength;
-  const sanitized = sanitizeMarkdown(input.value);
+  const sanitized = redactMarkdownSecrets(input.value);
   if (sanitized.length <= maxLength) {
     return sanitized;
   }

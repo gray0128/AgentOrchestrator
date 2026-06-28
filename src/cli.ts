@@ -3,7 +3,7 @@ import { realpathSync } from "node:fs";
 import { isSea } from "node:sea";
 import { fileURLToPath } from "node:url";
 
-import { sanitizeMarkdown } from "./security/redaction.ts";
+import { redactMarkdownSecrets } from "./security/redaction.ts";
 import { runDoctor } from "./cli/commands/doctor.ts";
 import { runInitConfig } from "./cli/commands/init-config.ts";
 import { runInspectRun } from "./cli/commands/inspect-run.ts";
@@ -75,7 +75,7 @@ export async function runCli(
     return 1;
   } catch (error) {
     io.stderr(
-      sanitizeMarkdown(error instanceof Error ? error.message : String(error)),
+      redactMarkdownSecrets(error instanceof Error ? error.message : String(error)),
     );
     return 1;
   }

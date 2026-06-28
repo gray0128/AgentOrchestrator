@@ -1,6 +1,6 @@
 import type { ImplementationResult } from "../agents/adapter.ts";
 import { renderAgentMarker } from "../github/markers.ts";
-import { sanitizeMarkdown } from "../security/redaction.ts";
+import { redactMarkdownSecrets } from "../security/redaction.ts";
 import { appendAgentSubmissionFooter, type AgentAttribution } from "./agent-attribution.ts";
 
 export type RenderPrBodyInput = {
@@ -16,7 +16,7 @@ export function renderPullRequestBody(input: RenderPrBodyInput, attribution?: Ag
   return appendAgentSubmissionFooter(
     `## Summary
 
-${sanitizeMarkdown(implementation.pr_body_fields.summary)}
+${redactMarkdownSecrets(implementation.pr_body_fields.summary)}
 
 ## Plan
 
@@ -28,7 +28,7 @@ ${renderList(implementation.pr_body_fields.tests)}
 
 ## Risk
 
-- ${sanitizeMarkdown(implementation.pr_body_fields.risk)}
+- ${redactMarkdownSecrets(implementation.pr_body_fields.risk)}
 
 Closes #${implementation.issue}`,
     renderAgentMarker({
@@ -44,5 +44,5 @@ Closes #${implementation.issue}`,
 }
 
 function renderList(items: readonly string[]): string {
-  return items.length > 0 ? items.map((item) => `- ${sanitizeMarkdown(item)}`).join("\n") : "- Not run";
+  return items.length > 0 ? items.map((item) => `- ${redactMarkdownSecrets(item)}`).join("\n") : "- Not run";
 }

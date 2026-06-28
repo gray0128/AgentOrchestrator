@@ -1,5 +1,5 @@
 import { renderAgentMarker } from "../github/markers.ts";
-import { sanitizeMarkdown } from "../security/redaction.ts";
+import { redactMarkdownSecrets } from "../security/redaction.ts";
 
 export type FinalSummaryInput = {
   readonly runId: string;
@@ -17,8 +17,8 @@ export function renderFinalSummary(input: FinalSummaryInput): string {
 - PR: #${input.pr}
 - Merge commit: \`${input.mergeSha}\`
 - Final state: issue_closed
-- Tests: ${sanitizeMarkdown(input.tests)}
-- Risk: ${sanitizeMarkdown(input.risk)}
+- Tests: ${redactMarkdownSecrets(input.tests)}
+- Risk: ${redactMarkdownSecrets(input.risk)}
 
 ${renderAgentMarker({
   schema: "agent-orchestrator:v1",

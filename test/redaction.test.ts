@@ -17,6 +17,7 @@ import {
   migrateStateDatabase,
   openReadOnlyStateDatabase,
   openStateDatabase,
+  redactMarkdownSecrets,
   redactSecretLikeValues,
   sanitizeMarkdown,
   startUiRuntime,
@@ -82,9 +83,14 @@ test("redactSecretLikeValues redacts AWS keys and env-style secrets", () => {
   }
 });
 
-test("sanitizeMarkdown is the shared redaction entry point", () => {
+test("redactMarkdownSecrets is the shared markdown redaction entry point", () => {
   const input = `token=${secretSamples.ghp}`;
-  assert.equal(sanitizeMarkdown(input), redactSecretLikeValues(input));
+  assert.equal(redactMarkdownSecrets(input), redactSecretLikeValues(input));
+});
+
+test("sanitizeMarkdown remains a compatibility alias", () => {
+  const input = `token=${secretSamples.ghp}`;
+  assert.equal(sanitizeMarkdown(input), redactMarkdownSecrets(input));
 });
 
 test("boundMarkdown redacts secrets before truncation", () => {

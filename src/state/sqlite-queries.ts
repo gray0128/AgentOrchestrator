@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 
 import { ErrorCode, OrchestratorError } from "../errors.ts";
-import { sanitizeMarkdown } from "../security/redaction.ts";
+import { redactMarkdownSecrets } from "../security/redaction.ts";
 import { buildGitHubLinks } from "../ui/github-links.ts";
 import { stateLabelZh } from "../ui/state-labels-zh.ts";
 import type { StateDatabase } from "./sqlite-store.ts";
@@ -297,7 +297,7 @@ function mapWorkflowRunSummary(row: WorkflowRunRow): WorkflowRunSummary {
     leaseOwner: row.lease_owner,
     leaseExpiresAt: row.lease_expires_at,
     lastErrorCode: row.last_error_code,
-    lastErrorMessage: row.last_error_message ? sanitizeMarkdown(row.last_error_message) : null,
+    lastErrorMessage: row.last_error_message ? redactMarkdownSecrets(row.last_error_message) : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     links: buildGitHubLinks({
@@ -320,7 +320,7 @@ function mapDeliverySummary(row: DeliveryRow): DeliverySummary {
     processedAt: row.processed_at,
     status: row.status,
     errorCode: row.error_code,
-    errorMessage: row.error_message ? sanitizeMarkdown(row.error_message) : null
+    errorMessage: row.error_message ? redactMarkdownSecrets(row.error_message) : null
   };
 }
 

@@ -9,7 +9,7 @@ import { runIssueLifecycleFromStep, type RunIssueLifecycleInput, type RuntimeLif
 import { advanceWebhookEvent } from "../orchestrator/webhook-runtime.ts";
 import { isActorGatedDomainEvent, shouldDiscardActor } from "../policy/actor-gate.ts";
 import type { LoadedRepoPolicy } from "../policy/repo-policy-loader.ts";
-import { sanitizeMarkdown } from "../security/redaction.ts";
+import { redactMarkdownSecrets } from "../security/redaction.ts";
 import { getWorkflowRunSnapshotByPullRequest } from "../state/sqlite-store.ts";
 import type { StateDatabase } from "../state/sqlite-store.ts";
 import { WorkflowState } from "../state/state-machine.ts";
@@ -287,7 +287,7 @@ async function handleWebhookRequest(input: {
       await finalizeDeliveryStatus(input.deliveryStore, acceptedDeliveryId, {
         status: "failed",
         errorCode: code as ErrorCode,
-        errorMessage: sanitizeMarkdown(
+        errorMessage: redactMarkdownSecrets(
           error instanceof Error ? error.message : String(error),
         ),
       });
@@ -299,7 +299,7 @@ async function handleWebhookRequest(input: {
     writeJson(input.response, webhookErrorStatus(code), {
       ok: false,
       error: code,
-      message: sanitizeMarkdown(
+      message: redactMarkdownSecrets(
         error instanceof Error ? error.message : String(error),
       ),
     });
@@ -615,7 +615,7 @@ function parseJsonResponse(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    return sanitizeMarkdown(text);
+    return redactMarkdownSecrets(text);
   }
 }
 

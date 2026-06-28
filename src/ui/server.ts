@@ -5,7 +5,7 @@ import { getAsset, isSea } from "node:sea";
 import { fileURLToPath } from "node:url";
 
 import { ErrorCode } from "../errors.ts";
-import { sanitizeMarkdown } from "../security/redaction.ts";
+import { redactMarkdownSecrets } from "../security/redaction.ts";
 import {
   getDashboardStats,
   listRecentDeliveries,
@@ -74,7 +74,7 @@ export async function startUiRuntime(input: UiRuntimeOptions): Promise<UiRuntime
     try {
       await handleUiRequest(request, response, input);
     } catch (error) {
-      const message = sanitizeMarkdown(error instanceof Error ? error.message : String(error));
+      const message = redactMarkdownSecrets(error instanceof Error ? error.message : String(error));
       writeJson(response, 500, {
         ok: false,
         error: {
@@ -313,7 +313,7 @@ function writeError(response: HttpResponse, status: number, code: string, messag
     ok: false,
     error: {
       code,
-      message: sanitizeMarkdown(message)
+      message: redactMarkdownSecrets(message)
     }
   });
 }

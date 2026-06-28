@@ -23,6 +23,20 @@ const repoSignals = [
   /\bagent\/issue-|Closes\s+#\d+|agent:autopilot\b/i
 ];
 
+const terminalWorkflowStates = [
+  WorkflowState.Blocked,
+  WorkflowState.Paused,
+  WorkflowState.Failed,
+  WorkflowState.IssueClosed,
+  WorkflowState.Merged
+] as const;
+
+const mergeResumeWorkflowStates = [
+  WorkflowState.PrReviewing,
+  WorkflowState.CiWaiting,
+  WorkflowState.MergeReady
+] as const;
+
 export type TriageInput = {
   readonly runId: string;
   readonly repo: RuntimeLifecycleRepo;
@@ -104,7 +118,7 @@ export function mapStateToNextStep(
   resumeHint: boolean,
   issueText: string
 ): TriageNextStep {
-  if ([WorkflowState.Blocked, WorkflowState.Paused, WorkflowState.Failed, WorkflowState.IssueClosed, WorkflowState.Merged].includes(state as never)) {
+  if (isOneOfWorkflowStates(state, terminalWorkflowStates)) {
     return "blocked";
   }
   if (state === WorkflowState.MergeReady) {
@@ -122,7 +136,7 @@ export function mapStateToNextStep(
   if (state === WorkflowState.PrOpened || state === WorkflowState.PrReviewing) {
     return "pr_reviewing";
   }
-  if (/\b(merge|合并)\b/i.test(issueText) && [WorkflowState.PrReviewing, WorkflowState.CiWaiting, WorkflowState.MergeReady].includes(state as never)) {
+  if (/\b(merge|合并)\b/i.test(issueText) && isOneOfWorkflowStates(state, mergeResumeWorkflowStates)) {
     return state === WorkflowState.MergeReady ? "merge_ready" : "ci_waiting";
   }
   if (state === WorkflowState.PlanReviewing && resumeHint) {
@@ -172,6 +186,13 @@ function detectFilteredTopics(text: string): string[] {
     }
   }
   return topics;
+}
+
+function isOneOfWorkflowStates<T extends WorkflowState>(
+  state: string,
+  candidates: readonly T[]
+): state is T {
+  return candidates.some((candidate) => candidate === state);
 }
 
 function buildTriageEnvelope(input: TriageInput): TaskEnvelope {

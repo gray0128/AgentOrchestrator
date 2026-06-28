@@ -77,6 +77,7 @@ export {
 export { createRequestHash } from "./github/request-hash.ts";
 export {
   boundMarkdown,
+  redactMarkdownSecrets,
   redactSecretLikeValues,
   sanitizeMarkdown,
 } from "./security/redaction.ts";
