@@ -47,7 +47,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "26"
+          # Node 26.4.0 SEA binaries segfault on Intel macOS (see nodejs/node#62893).
+          node-version: "26.3.1"
           cache: npm
 
       - run: npm ci
@@ -58,23 +59,6 @@ jobs:
           AO_ARCH: ${{ matrix.arch }}
           AO_SEA_OUTPUT: dist/${{ matrix.executable }}
         run: node tools/build/build-sea.mjs
-
-      - name: Probe minimal SEA (darwin-x64 only)
-        if: matrix.artifact_name == 'ao-darwin-x64'
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mv dist/ao dist/ao-current
-          echo 'console.log("sea-probe-ok")' > dist/sea-probe.mjs
-          node -e "const fs=require('fs'); fs.writeFileSync('dist/sea-probe-config.json', JSON.stringify({main:'dist/sea-probe.mjs',mainFormat:'module',output:'dist/sea-probe'}, null, 2));"
-          node --build-sea dist/sea-probe-config.json
-          codesign --sign - --force --entitlements tools/build/sea-entitlements.plist dist/sea-probe
-          ./dist/sea-probe
-          curl -fsSL -o dist/ao-v0.1.1.tar.gz "https://github.com/gray0128/AgentOrchestrator/releases/download/v0.1.1/ao-darwin-x64.tar.gz"
-          tar -xzf dist/ao-v0.1.1.tar.gz -C dist ao
-          mv dist/ao dist/ao-v0.1.1
-          dist/ao-v0.1.1 --help | head -n 3
-          mv dist/ao-current dist/ao
 
       - name: Smoke test release binary
         shell: bash
