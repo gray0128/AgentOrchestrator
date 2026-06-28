@@ -65,7 +65,12 @@ execFileSync(nodeBinary, ["--build-sea", seaConfigPath], {
 });
 
 if (platform === "darwin") {
-  execFileSync("codesign", ["--sign", "-", outputName], { stdio: "inherit" });
+  const entitlementsPath = join(rootDir, "tools/build/sea-entitlements.plist");
+  execFileSync(
+    "codesign",
+    ["--sign", "-", "--force", "--entitlements", entitlementsPath, outputName],
+    { stdio: "inherit" },
+  );
 }
 
 const manifest = {

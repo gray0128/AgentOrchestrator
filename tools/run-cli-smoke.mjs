@@ -43,9 +43,10 @@ function runCommand(label, command, args, options = {}) {
     throw new Error(`${label} failed to start: ${result.error.message}`);
   }
   if (result.status !== 0) {
-    throw new Error(
-      `${label} exited with ${result.status ?? "unknown"}:\n${output.trim()}`,
-    );
+    const exitDetail = result.signal
+      ? `signal ${result.signal}`
+      : `code ${result.status ?? "unknown"}`;
+    throw new Error(`${label} exited with ${exitDetail}:\n${output.trim()}`);
   }
   if (options.expectPattern && !options.expectPattern.test(output)) {
     throw new Error(
