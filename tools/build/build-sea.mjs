@@ -44,6 +44,7 @@ await build({
   target: "node26",
   sourcemap: false,
   logLevel: "info",
+  external: ["playwright", "playwright-core", "fsevents", "chromium-bidi"],
 });
 
 const assets = collectUiAssets(publicDir);

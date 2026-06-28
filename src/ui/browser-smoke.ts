@@ -1,4 +1,16 @@
-import type { Page } from "playwright";
+type BrowserPage = {
+  waitForFunction(
+    pageFunction: (expected: string) => boolean,
+    arg: string,
+    options?: { timeout?: number },
+  ): Promise<void>;
+  locator(selector: string): { textContent(): Promise<string | null> };
+  goto(url: string): Promise<unknown>;
+  on(event: "pageerror", handler: (error: Error) => void): void;
+  click(selector: string): Promise<void>;
+  fill(selector: string, value: string): Promise<void>;
+  waitForSelector(selector: string, options?: { timeout?: number }): Promise<void>;
+};
 
 export type UiBrowserSmokeCheck = {
   readonly page: string;
@@ -24,7 +36,7 @@ export type UiBrowserSmokeOptions = {
 type StatusLineExpectation = "updated" | "refresh-off" | "error" | "listed";
 
 async function waitForStatusLine(
-  page: Page,
+  page: BrowserPage,
   expectation: StatusLineExpectation,
   timeoutMs = 10_000,
 ): Promise<void> {
@@ -58,7 +70,7 @@ function recordCheck(
 }
 
 async function assertTextContent(
-  page: Page,
+  page: BrowserPage,
   selector: string,
   predicate: (text: string) => boolean,
 ): Promise<boolean> {
