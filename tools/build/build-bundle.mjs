@@ -24,10 +24,11 @@ await build({
   external: ["fsevents"],
 });
 
-// Unix wrapper: uses ${0%/*} to resolve the script's own directory (POSIX sh, works on Linux and macOS)
+// Unix wrapper: POSIX sh only — do not invoke on Windows; use ao.cmd instead.
+// ${0%/*} resolves the wrapper's own directory without requiring readlink, works on Linux and macOS.
 writeFileSync(
   wrapperPath,
-  '#!/usr/bin/env sh\nexec node "${0%/*}/ao.bundle.mjs" "$@"\n',
+  '#!/usr/bin/env sh\n# POSIX sh only — do not invoke on Windows; use ao.cmd instead\nexec node "${0%/*}/ao.bundle.mjs" "$@"\n',
 );
 chmodSync(wrapperPath, 0o755);
 

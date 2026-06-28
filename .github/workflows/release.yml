@@ -131,6 +131,7 @@ jobs:
 
       - name: Package bundle archives
         run: |
+          rm -f ao-bundle.tar.gz ao-bundle.tar.gz.sha256 ao-bundle-windows.zip ao-bundle-windows.zip.sha256
           cd dist
           tar -czf ../ao-bundle.tar.gz ao ao.bundle.mjs
           sha256sum ../ao-bundle.tar.gz > ../ao-bundle.tar.gz.sha256

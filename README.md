@@ -55,11 +55,12 @@ Live 运维和恢复演练按 [Live Operations And Recovery Runbook](docs/operat
 
 ## 安装和命令入口
 
-AgentOrchestrator 提供三种等价的 `ao` 入口。日常运维推荐预编译二进制；开发调试推荐源码入口。
+AgentOrchestrator 提供四种等价的 `ao` 入口。日常运维推荐预编译二进制；本机已安装 Node ≥26 的开发者可选择轻量 bundle；开发调试推荐源码入口。
 
 | 入口 | 适用场景 | 命令示例 | Node.js 要求 |
 | --- | --- | --- | --- |
 | 预编译二进制 | 生产/运维、无需本机 Node | `./ao doctor --config config/local.json` | 不需要 |
+| 轻量 bundle | 本机已安装 Node ≥26 的开发者 | `./ao doctor --config config/local.json` | `>=26.0.0` |
 | `npm link` 全局 `ao` | 在本仓库长期开发 | `ao doctor --config config/local.json` | `>=26.0.0`，且需在 `PATH` 中 |
 | 源码 CLI | 一次性调试、全局入口异常时的 fallback | `npm run cli -- doctor --config config/local.json` | `>=26.0.0` |
 
@@ -105,6 +106,42 @@ Copy-Item .\ao.exe "$env:USERPROFILE\bin\ao.exe" -Force
 ```
 
 本质上，安装就是把 `ao` / `ao.exe` 放入 `PATH` 中的目录。`mv ao /usr/local/bin/ao` 也可以，但需要自行确认目标目录权限和可执行权限；`install -m 755` 更适合文档化和重复覆盖。升级旧版本时，下载新 release 后覆盖同一路径即可。
+
+### 方式 A.1：下载轻量 bundle（已安装 Node ≥26 的开发者）
+
+如果本机已安装 Node.js ≥26，可下载只有 **~300 KB** 的轻量 bundle 包，无需内置运行时的完整 SEA 二进制：
+
+| 平台 | Release 资产名 |
+| --- | --- |
+| Linux / macOS | `ao-bundle.tar.gz`（含 `ao` + `ao.bundle.mjs`） |
+| Windows | `ao-bundle-windows.zip`（含 `ao.cmd` + `ao.bundle.mjs`） |
+
+安装示例：
+
+```sh
+# macOS / Linux（需要 Node ≥26 已在 PATH 中）
+curl -fsSL -o ao-bundle.tar.gz "https://github.com/gray0128/AgentOrchestrator/releases/latest/download/ao-bundle.tar.gz"
+tar -xzf ao-bundle.tar.gz
+chmod +x ao
+
+# 安装到系统 PATH
+sudo install -m 755 ao ao.bundle.mjs /usr/local/bin/
+# 或安装到用户目录
+mkdir -p "$HOME/.local/bin"
+install -m 755 ao ao.bundle.mjs "$HOME/.local/bin/"
+
+ao --help
+ao doctor --config config/local.json
+
+# Windows（PowerShell，需要 Node ≥26 已在 PATH 中）
+Invoke-WebRequest -Uri "https://github.com/gray0128/AgentOrchestrator/releases/latest/download/ao-bundle-windows.zip" -OutFile ao-bundle.zip
+Expand-Archive ao-bundle.zip -DestinationPath .
+New-Item -ItemType Directory -Force "$env:USERPROFILE\bin" | Out-Null
+Copy-Item .\ao.cmd, .\ao.bundle.mjs "$env:USERPROFILE\bin\" -Force
+& "$env:USERPROFILE\bin\ao.cmd" --help
+```
+
+> **注意**：`ao` 和 `ao.bundle.mjs` 必须放在同一目录下，`ao` 包装脚本会自动定位同目录的 bundle 文件。
 
 ### 方式 B：从源码运行（开发）
 
