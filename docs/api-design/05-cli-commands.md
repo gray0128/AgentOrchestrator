@@ -196,31 +196,6 @@ Output:
 
 - On start, prints the local UI URL, for example `http://127.0.0.1:23847/ui/`.
 
-### `ao ui-browser-smoke`
-
-Runs a headless Chromium browser smoke against the local UI. This command starts the UI server, exercises dashboard, runs, run detail, and deliveries pages, and exits.
-
-Flags:
-
-- `--config <path>`: local config path.
-- `--db <path>`: SQLite path override.
-- `--host <host>`: defaults to `127.0.0.1`.
-- `--port <port>`: defaults to `23847`; `0` selects an ephemeral port.
-- `--run-id <run_id>`: optional run to use for run-detail assertions; defaults to the first run in SQLite.
-- `--headed`: run Chromium with a visible window for local debugging.
-
-Verification:
-
-- Requires at least one workflow run in SQLite unless `--run-id` is provided.
-- Visits `/ui/`, `/ui/runs`, `/ui/runs/:runId`, and `/ui/deliveries`.
-- Asserts dashboard metrics, auto-refresh toggle, state and delivery filters, empty states, run-detail content, and missing-run error state.
-- Fails when browser page errors or console errors are observed.
-
-Output:
-
-- JSON summary with `command`, `url`, `checks[]`, and `jsErrors[]`.
-- Exit `0` only when every check passes and no JS errors were captured.
-
 ## Exit Codes
 
 | Code | Meaning |

@@ -58,10 +58,6 @@ export async function runCli(
       const { runUi } = await import("./commands/ui.ts");
       return await runUi(rest, io);
     }
-    if (command === "ui-browser-smoke") {
-      const { runUiBrowserSmokeCommand } = await import("./commands/ui-browser-smoke.ts");
-      return await runUiBrowserSmokeCommand(rest, io);
-    }
     io.stderr(`Unsupported command: ${command}\n\n${renderHelp()}`);
     return 1;
   } catch (error) {

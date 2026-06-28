@@ -12,7 +12,6 @@ export function renderHelp(): string {
     "  ao reconcile --config <path> (--dry-run | --apply)",
     "  ao inspect-run --config <path> (--run-id <id> | --repo <owner/name> --issue <number>)",
     "  ao ui --config <path> [--host 127.0.0.1] [--port 23847]",
-    "  ao ui-browser-smoke --config <path> [--run-id <id>] [--headed]",
     "",
     "First run:",
     "  ao init-config --repo gray0128/claw-owner-task --repo-path /path/to/checkout",

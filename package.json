@@ -19,12 +19,10 @@
     "schema:check": "node tools/check-schemas.mjs",
     "smoke:cli": "node --experimental-strip-types --test test/cli-smoke.test.ts",
     "smoke:e2e": "node --experimental-strip-types --test test/e2e-smoke.test.ts",
-    "smoke:ui": "node --experimental-strip-types --test test/ui-browser-smoke.test.ts",
     "test": "node --experimental-strip-types --test test/**/*.test.ts",
     "test:unit": "node tools/run-unit-tests.mjs"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0",
-    "playwright": "^1.52.0"
+    "esbuild": "^0.25.0"
   }
 }
