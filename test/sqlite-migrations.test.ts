@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import { migrateStateDatabase, openStateDatabase } from "../src/index.ts";
+import { migrateStateDatabase, openStateDatabase } from "../src/internal.ts";
 
 const expectedColumns = {
   deliveries: [

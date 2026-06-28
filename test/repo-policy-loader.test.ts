@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { ErrorCode, loadRepoPolicy, resolveRepoPolicyPath } from "../src/index.ts";
-import type { ManagedRepositoryConfig, RepoPolicy } from "../src/index.ts";
+import { ErrorCode, loadRepoPolicy, resolveRepoPolicyPath } from "../src/internal.ts";
+import type { ManagedRepositoryConfig, RepoPolicy } from "../src/internal.ts";
 
 test("repo policy loader reads and validates policy inside checkout", () => {
   const root = mkdtempSync(join(tmpdir(), "agent-orchestrator-policy-"));

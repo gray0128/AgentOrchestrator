@@ -5,7 +5,7 @@ import test from "node:test";
 
 import { DomainEventType, WebhookDomainEventType, normalizeGitHubWebhook } from "../src/webhooks/domain-event.ts";
 import { WorkflowEvent } from "../src/state/state-machine.ts";
-import type { DomainEvent, WebhookDomainEvent, WorkflowDomainEvent } from "../src/index.ts";
+import type { DomainEvent, WebhookDomainEvent, WorkflowDomainEvent } from "../src/internal.ts";
 
 const receivedAt = new Date("2026-06-24T00:00:00.000Z");
 

@@ -1,8 +1,8 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import { ErrorCode, GitHubRestApiAdapter } from "../src/index.ts";
-import type { GitHubAppTokenProvider, GitHubRestFetch } from "../src/index.ts";
+import { ErrorCode, GitHubRestApiAdapter } from "../src/internal.ts";
+import type { GitHubAppTokenProvider, GitHubRestFetch } from "../src/internal.ts";
 
 test("REST adapter writes issue comments and labels with installation token auth", async () => {
   const fetch = new FetchRecorder([

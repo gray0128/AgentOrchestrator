@@ -6,7 +6,7 @@ import {
   buildSchedulerReport,
   buildSchedulerRunsForReport,
   decideSchedulerRun,
-} from "../src/index.ts";
+} from "../src/internal.ts";
 import { ErrorCode } from "../src/errors.ts";
 
 const now = new Date("2026-06-24T00:01:00.000Z");

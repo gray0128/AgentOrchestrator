@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import { WorkflowState, buildBlockedHandling, evaluateAgentExecutionGate, renderBlockedComment } from "../src/index.ts";
+import { WorkflowState, buildBlockedHandling, evaluateAgentExecutionGate, renderBlockedComment } from "../src/internal.ts";
 
 test("pause label or paused state prevents new agent execution", () => {
   assert.deepEqual(

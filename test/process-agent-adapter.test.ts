@@ -9,8 +9,8 @@ import {
   ErrorCode,
   ProcessAgentAdapter,
   resolveAgentEnv,
-} from "../src/index.ts";
-import type { TaskEnvelope } from "../src/index.ts";
+} from "../src/internal.ts";
+import type { TaskEnvelope } from "../src/internal.ts";
 
 test("process agent adapter sends envelope over stdin and validates planner JSON output", async () => {
   const workspace = mkdtempSync(join(tmpdir(), "agent-orchestrator-process-"));

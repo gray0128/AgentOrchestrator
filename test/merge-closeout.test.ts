@@ -8,7 +8,7 @@ import {
   renderFinalSummary,
   createRequestHash,
   resolveGithubMergeable
-} from "../src/index.ts";
+} from "../src/internal.ts";
 
 test("merge gate recomputes labels, risk, reviews, checks, mergeability, and current head", () => {
   const allowed = evaluateMergeGate({

@@ -13,7 +13,7 @@ import {
   migrateStateDatabase,
   openStateDatabase,
   resolvePromptInjectionBlock
-} from "../src/index.ts";
+} from "../src/internal.ts";
 import { buildDispatchInput } from "../src/orchestrator/issue-dispatch.ts";
 import { DomainEventType } from "../src/webhooks/domain-event.ts";
 import { FakeAgentAdapter } from "../src/agents/fake-agent-adapter.ts";

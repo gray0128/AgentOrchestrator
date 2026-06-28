@@ -9,7 +9,7 @@ import {
   migrateStateDatabase,
   openStateDatabase,
   recordDeliveryOnce,
-} from "../src/index.ts";
+} from "../src/internal.ts";
 
 test("first webhook delivery id is recorded as received", async () => {
   const store = new InMemoryDeliveryStore();

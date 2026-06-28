@@ -1,8 +1,8 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import { AgentRole, ErrorCode, FakeAgentAdapter, isAgentRole } from "../src/index.ts";
-import type { PlanResult, TaskEnvelope } from "../src/index.ts";
+import { AgentRole, ErrorCode, FakeAgentAdapter, isAgentRole } from "../src/internal.ts";
+import type { PlanResult, TaskEnvelope } from "../src/internal.ts";
 
 test("role adapters accept a task envelope and return typed results", async () => {
   const result: PlanResult = {

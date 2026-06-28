@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { ErrorCode } from "../src/index.ts";
+import { ErrorCode } from "../src/internal.ts";
 
 test("runtime error code registry matches documented registry", () => {
   const registry = readFileSync("docs/api-design/06-error-codes-and-permission-actions.md", "utf8");

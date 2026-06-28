@@ -6,7 +6,7 @@ import {
   attributionFromMetadata,
   renderAgentAttribution,
   renderPlanComment
-} from "../src/index.ts";
+} from "../src/internal.ts";
 import { AgentRole } from "../src/agents/adapter.ts";
 
 test("renderAgentAttribution includes agent, role, and model", () => {

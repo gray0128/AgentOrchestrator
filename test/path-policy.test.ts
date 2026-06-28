@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import { evaluatePathPolicy, matchesPathPattern, resolvePathPolicyBlock } from "../src/index.ts";
+import { evaluatePathPolicy, matchesPathPattern, resolvePathPolicyBlock } from "../src/internal.ts";
 
 test("path policy allows actual changed files inside allow rules", () => {
   assert.deepEqual(

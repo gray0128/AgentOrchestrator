@@ -1,8 +1,8 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import { buildReconciliationDryRunReport } from "../src/index.ts";
-import type { ReconciliationDryRunInput } from "../src/index.ts";
+import { buildReconciliationDryRunReport } from "../src/internal.ts";
+import type { ReconciliationDryRunInput } from "../src/internal.ts";
 
 test("dry-run reconciliation reports candidate issues, PRs, and expired leases without side effects", () => {
   const input: ReconciliationDryRunInput = {

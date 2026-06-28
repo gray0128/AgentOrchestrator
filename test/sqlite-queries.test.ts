@@ -8,7 +8,7 @@ import {
   listWorkflowRuns,
   migrateStateDatabase,
   openStateDatabase,
-} from "../src/index.ts";
+} from "../src/internal.ts";
 
 const now = new Date("2026-06-25T08:00:00.000Z");
 

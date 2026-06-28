@@ -12,8 +12,8 @@ import {
   insertWorkflowRun,
   migrateStateDatabase,
   openStateDatabase
-} from "../src/index.ts";
-import type { DomainEvent } from "../src/index.ts";
+} from "../src/internal.ts";
+import type { DomainEvent } from "../src/internal.ts";
 
 test("webhook runtime creates a run, transitions to planning, writes comment, and records idempotent action", async () => {
   const database = openStateDatabase();

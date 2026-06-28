@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import { WorkflowState, repairStateFromArtifacts } from "../src/index.ts";
+import { WorkflowState, repairStateFromArtifacts } from "../src/internal.ts";
 
 test("reconciliation rebinds existing plan marker without duplicate writes", () => {
   const result = repairStateFromArtifacts({

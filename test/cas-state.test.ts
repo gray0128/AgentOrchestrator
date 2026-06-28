@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import { casUpdateRunState, insertWorkflowRun, migrateStateDatabase, openStateDatabase } from "../src/index.ts";
+import { casUpdateRunState, insertWorkflowRun, migrateStateDatabase, openStateDatabase } from "../src/internal.ts";
 
 test("CAS state update checks expected run, state, and head sha", () => {
   const database = openStateDatabase();

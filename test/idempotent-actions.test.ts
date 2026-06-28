@@ -8,7 +8,7 @@ import {
   openStateDatabase,
   recordIdempotentAction,
   recordRunLastError
-} from "../src/index.ts";
+} from "../src/internal.ts";
 
 test("recordRunLastError stores registered code and diagnostic message", () => {
   const database = openStateDatabase();

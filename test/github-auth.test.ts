@@ -10,8 +10,8 @@ import {
   requestInstallationToken,
   resolveGitHubAppCredentials,
   validateLocalConfig
-} from "../src/index.ts";
-import type { LocalConfig, TokenFetch } from "../src/index.ts";
+} from "../src/internal.ts";
+import type { LocalConfig, TokenFetch } from "../src/internal.ts";
 
 test("local config can reference GitHub App credential environment variables", () => {
   const config = localConfig();

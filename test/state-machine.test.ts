@@ -8,8 +8,8 @@ import {
   isTerminalState,
   resolveTransition,
   stateTransitions
-} from "../src/index.ts";
-import type { Transition, WorkflowState as WorkflowStateValue } from "../src/index.ts";
+} from "../src/internal.ts";
+import type { Transition, WorkflowState as WorkflowStateValue } from "../src/internal.ts";
 
 const contractTransitions: readonly Transition[] = [
   {

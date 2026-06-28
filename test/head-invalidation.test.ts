@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import { insertWorkflowRun, invalidateForNewHead, migrateStateDatabase, openStateDatabase } from "../src/index.ts";
+import { insertWorkflowRun, invalidateForNewHead, migrateStateDatabase, openStateDatabase } from "../src/internal.ts";
 
 test("PR synchronize with a new head invalidates old review, CI, and merge-ready conclusions", () => {
   const database = openStateDatabase();

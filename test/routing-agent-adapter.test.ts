@@ -1,9 +1,9 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import { AgentRole, FakeAgentAdapter } from "../src/index.ts";
+import { AgentRole, FakeAgentAdapter } from "../src/internal.ts";
 import { RoutingAgentAdapter } from "../src/agents/routing-agent-adapter.ts";
-import type { PlanResult, TaskEnvelope } from "../src/index.ts";
+import type { PlanResult, TaskEnvelope } from "../src/internal.ts";
 
 test("routing agent uses default profile candidate before fallback", async () => {
   const fallback = planner("fallback");

@@ -11,8 +11,8 @@ import {
   mapPrReviewVerdictToEvent,
   validatePrReviewerEnvelope,
   validatePrReviewerVerdict
-} from "../src/index.ts";
-import type { ReviewerVerdict, TaskEnvelope } from "../src/index.ts";
+} from "../src/internal.ts";
+import type { ReviewerVerdict, TaskEnvelope } from "../src/internal.ts";
 
 test("PR reviewer envelope requires PR context and review output", () => {
   const envelope = prEnvelope();

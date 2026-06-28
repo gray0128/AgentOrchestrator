@@ -13,8 +13,8 @@ import {
   openStateDatabase,
   runMockedDispatchSmoke,
   runMockedEndToEndSmoke
-} from "../src/index.ts";
-import type { RuntimeLifecycleAgents } from "../src/index.ts";
+} from "../src/internal.ts";
+import type { RuntimeLifecycleAgents } from "../src/internal.ts";
 import { seedWorkspaceFile } from "./helpers/git-workspace-fixture.ts";
 import { SequenceFakeAgentAdapter } from "./helpers/sequence-fake-agent-adapter.ts";
 import { canAdvanceMergeGateForHead } from "../src/orchestrator/pr-gate.ts";
