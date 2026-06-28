@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import { createIdempotencyKey } from "../src/index.ts";
+import { createIdempotencyKey } from "../src/internal.ts";
 
 test("idempotency keys are stable readable run-scoped segments", () => {
   assert.equal(createIdempotencyKey("run_abc", "implementer", "create-branch"), "run_abc:implementer:create-branch");

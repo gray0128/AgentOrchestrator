@@ -15,7 +15,7 @@ import {
   openStateDatabase,
   recordIdempotentAction,
   runIssueLifecycle
-} from "../src/index.ts";
+} from "../src/internal.ts";
 import {
   executeMaterialGitHubWrite,
   recordCompletedMaterialAction,

@@ -9,7 +9,7 @@ import {
   migrateStateDatabase,
   openStateDatabase,
   runIssueLifecycle
-} from "../src/index.ts";
+} from "../src/internal.ts";
 import { DomainEventType } from "../src/webhooks/domain-event.ts";
 import { createGitWorkspaceFixture, seedWorkspaceFile } from "./helpers/git-workspace-fixture.ts";
 

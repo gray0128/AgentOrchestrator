@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import { FakeGitHubApiAdapter, createRequestHash } from "../src/index.ts";
+import { FakeGitHubApiAdapter, createRequestHash } from "../src/internal.ts";
 
 test("branch and commit write actions are idempotent and use base/head evidence", async () => {
   const github = new FakeGitHubApiAdapter();

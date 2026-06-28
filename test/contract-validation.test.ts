@@ -16,8 +16,8 @@ import {
   validateRepoPolicy,
   validateReviewerVerdict,
   validateTaskEnvelope
-} from "../src/index.ts";
-import type { FixResult, ImplementationResult, LocalConfig, PlanResult, RepoPolicy, ReviewerVerdict, TaskEnvelope } from "../src/index.ts";
+} from "../src/internal.ts";
+import type { FixResult, ImplementationResult, LocalConfig, PlanResult, RepoPolicy, ReviewerVerdict, TaskEnvelope } from "../src/internal.ts";
 
 test("planner input validates against task-envelope schema requirements", () => {
   const envelope = taskEnvelope();

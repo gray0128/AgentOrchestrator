@@ -6,8 +6,8 @@ import {
   FakeGitHubApiAdapter,
   renderPlanningStartedComment,
   writePlanningStartedComment
-} from "../src/index.ts";
-import type { DomainEvent } from "../src/index.ts";
+} from "../src/internal.ts";
+import type { DomainEvent } from "../src/internal.ts";
 
 test("planning-started comment renders the contract marker", () => {
   const body = renderPlanningStartedComment({

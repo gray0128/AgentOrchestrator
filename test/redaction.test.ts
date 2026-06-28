@@ -21,7 +21,7 @@ import {
   redactSecretLikeValues,
   sanitizeMarkdown,
   startUiRuntime,
-} from "../src/index.ts";
+} from "../src/internal.ts";
 
 const secretSamples = {
   ghp: "ghp_123456789012345678901234567890123456",

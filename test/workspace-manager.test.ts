@@ -15,7 +15,7 @@ import {
   readDiffFileContents,
   slugify,
   validateControlledWorkspace
-} from "../src/index.ts";
+} from "../src/internal.ts";
 import { createGitWorkspaceFixture, runGit, seedWorkspaceFile } from "./helpers/git-workspace-fixture.ts";
 
 test("workspace manager creates deterministic branch names and controlled paths", () => {

@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import { acquireLease, insertWorkflowRun, migrateStateDatabase, openStateDatabase } from "../src/index.ts";
+import { acquireLease, insertWorkflowRun, migrateStateDatabase, openStateDatabase } from "../src/internal.ts";
 
 test("concurrent lease acquisition allows only one owner", () => {
   const database = openStateDatabase();

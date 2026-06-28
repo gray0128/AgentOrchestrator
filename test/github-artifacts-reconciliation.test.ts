@@ -12,7 +12,7 @@ import {
   readGitHubRepairArtifacts,
   reconcileFromGitHubArtifacts,
   renderAgentMarker
-} from "../src/index.ts";
+} from "../src/internal.ts";
 import type {
   GitHubArtifactFetch,
   GitHubArtifactReader,
@@ -20,7 +20,7 @@ import type {
   GitHubIssueCommentArtifact,
   GitHubPullRequestArtifact,
   GitHubReviewArtifact
-} from "../src/index.ts";
+} from "../src/internal.ts";
 
 test("GitHub-backed reconciliation repairs local state from live artifacts", async () => {
   const database = openStateDatabase();

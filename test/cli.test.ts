@@ -18,7 +18,7 @@ import {
   runCli,
   startServeRuntime,
   createSignature,
-} from "../src/index.ts";
+} from "../src/internal.ts";
 import { fakeGitHubArtifactReader } from "../src/github/fake-github-artifact-reader.ts";
 import { createGitWorkspaceFixture, seedWorkspaceFile } from "./helpers/git-workspace-fixture.ts";
 import { buildResumeArtifactState } from "./helpers/resume-artifact-fixture.ts";

@@ -12,7 +12,7 @@ import {
   runCli,
   runUiBrowserSmoke,
   startUiRuntime,
-} from "../src/index.ts";
+} from "../src/internal.ts";
 
 const now = new Date("2026-06-25T08:00:00.000Z");
 const smokeRunId = "run_ui_browser_smoke";

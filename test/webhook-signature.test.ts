@@ -8,7 +8,7 @@ import {
   createSignature,
   defaultWebhookMaxPayloadBytes,
   verifyWebhookSignature
-} from "../src/index.ts";
+} from "../src/internal.ts";
 
 test("valid GitHub sha256 webhook signatures pass", () => {
   const payload = Buffer.from(JSON.stringify({ action: "labeled", issue: { number: 1 } }));

@@ -9,8 +9,8 @@ import {
   renderPlanReviewComment,
   renderPrReviewComment,
   validateAgentMarker
-} from "../src/index.ts";
-import type { FixResult, PlanResult, ReviewerVerdict } from "../src/index.ts";
+} from "../src/internal.ts";
+import type { FixResult, PlanResult, ReviewerVerdict } from "../src/internal.ts";
 import { renderFixComment } from "../src/orchestrator/plan-comments.ts";
 
 test("plan comment includes a valid planner marker that can be found during reconciliation", () => {

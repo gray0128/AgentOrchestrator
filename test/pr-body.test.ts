@@ -1,8 +1,8 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import { AgentRole, findAgentMarker, renderPullRequestBody } from "../src/index.ts";
-import type { ImplementationResult } from "../src/index.ts";
+import { AgentRole, findAgentMarker, renderPullRequestBody } from "../src/internal.ts";
+import type { ImplementationResult } from "../src/internal.ts";
 
 test("PR body contains plan link, tests, risk, run marker, and closes issue", () => {
   const body = renderPullRequestBody({

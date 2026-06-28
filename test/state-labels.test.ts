@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-import { WorkflowState, controlLabels, entryLabel, stateLabels, syncStateLabels } from "../src/index.ts";
+import { WorkflowState, controlLabels, entryLabel, stateLabels, syncStateLabels } from "../src/internal.ts";
 
 test("state label synchronization preserves entry and control labels", () => {
   const result = syncStateLabels({
