@@ -1,4 +1,4 @@
-import { sanitizeMarkdown } from "../../security/redaction.ts";
+import { redactMarkdownSecrets } from "../../security/redaction.ts";
 import { doctorAgentEnv, doctorAgents, doctorGitHubCredentials, doctorRepositories, doctorWebhookSecret, loadValidLocalConfig, parseFlags } from "../support.ts";
 import type { LocalConfig } from "../../contracts/validation.ts";
 import type { CliIo } from "../types.ts";
@@ -21,7 +21,7 @@ export async function runDoctor(args: readonly string[], io: CliIo): Promise<num
     checks.push({
       name: "local_config",
       status: "fail",
-      message: sanitizeMarkdown(
+      message: redactMarkdownSecrets(
         error instanceof Error ? error.message : String(error),
       ),
     });

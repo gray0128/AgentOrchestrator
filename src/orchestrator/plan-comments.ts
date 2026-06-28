@@ -1,14 +1,14 @@
 import type { PlanResult, ReviewerVerdict } from "../agents/adapter.ts";
 import type { FixResult } from "../contracts/validation.ts";
 import { renderAgentMarker } from "../github/markers.ts";
-import { sanitizeMarkdown } from "../security/redaction.ts";
+import { redactMarkdownSecrets } from "../security/redaction.ts";
 import { appendAgentSubmissionFooter, type AgentAttribution } from "./agent-attribution.ts";
 
 export function renderPlanComment(plan: PlanResult, attribution?: AgentAttribution): string {
   return appendAgentSubmissionFooter(
     `## Plan
 
-${sanitizeMarkdown(plan.summary)}
+${redactMarkdownSecrets(plan.summary)}
 
 ## Expected Changes
 
@@ -58,7 +58,7 @@ export function renderFixComment(fix: FixResult, attribution?: AgentAttribution)
   return appendAgentSubmissionFooter(
     `## Fix Round ${fix.fix_round}
 
-${sanitizeMarkdown(fix.summary)}
+${redactMarkdownSecrets(fix.summary)}
 
 ## Changed Files
 
@@ -109,7 +109,7 @@ ${renderBlockingFindings(verdict)}`,
 }
 
 function renderList(items: readonly string[]): string {
-  return items.length > 0 ? items.map((item) => `- ${sanitizeMarkdown(item)}`).join("\n") : "- None";
+  return items.length > 0 ? items.map((item) => `- ${redactMarkdownSecrets(item)}`).join("\n") : "- None";
 }
 
 function renderBlockingFindings(verdict: ReviewerVerdict): string {
@@ -118,6 +118,6 @@ function renderBlockingFindings(verdict: ReviewerVerdict): string {
   }
 
   return verdict.blocking_findings
-    .map((finding) => `- [${finding.severity}] ${sanitizeMarkdown(finding.message)}`)
+    .map((finding) => `- [${finding.severity}] ${redactMarkdownSecrets(finding.message)}`)
     .join("\n");
 }

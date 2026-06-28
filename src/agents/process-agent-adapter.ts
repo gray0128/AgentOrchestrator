@@ -8,7 +8,7 @@ import {
   validateTriageResult
 } from "../contracts/validation.ts";
 import { ErrorCode } from "../errors.ts";
-import { sanitizeMarkdown } from "../security/redaction.ts";
+import { redactMarkdownSecrets } from "../security/redaction.ts";
 import { resolveAgentEnv } from "./agent-env.ts";
 import type { AgentEnvConfig } from "./agent-env.ts";
 import { AgentRole } from "./adapter.ts";
@@ -185,7 +185,7 @@ function failure(errorCode: ErrorCode, message: string, metadata: AgentProcessMe
   return {
     ok: false,
     errorCode,
-    message: sanitizeMarkdown(message),
+    message: redactMarkdownSecrets(message),
     metadata
   };
 }

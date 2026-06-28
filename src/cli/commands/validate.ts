@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { validateLocalConfig, validateRepoPolicy } from "../../contracts/validation.ts";
 import { ErrorCode } from "../../errors.ts";
-import { sanitizeMarkdown } from "../../security/redaction.ts";
+import { redactMarkdownSecrets } from "../../security/redaction.ts";
 import { parseFlags, readJson } from "../support.ts";
 import type { CliIo } from "../types.ts";
 
@@ -40,7 +40,7 @@ export async function runValidate(
   }
 
   if (errors.length > 0) {
-    io.stderr(sanitizeMarkdown(errors.join("\n")));
+    io.stderr(redactMarkdownSecrets(errors.join("\n")));
     return 1;
   }
 

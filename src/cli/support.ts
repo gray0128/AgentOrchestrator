@@ -17,7 +17,7 @@ import { GitHubRestArtifactReader } from "../reconciliation/github-artifacts.ts"
 import type { RuntimeLifecycleAgentsWithTriage } from "../orchestrator/issue-dispatch.ts";
 import { loadRepoPolicy } from "../policy/repo-policy-loader.ts";
 import { buildSchedulerReport } from "../reconciliation/scheduler.ts";
-import { sanitizeMarkdown } from "../security/redaction.ts";
+import { redactMarkdownSecrets } from "../security/redaction.ts";
 import { claimScheduledRun, listWorkflowRunsForReconciliation, migrateStateDatabase, openStateDatabase } from "../state/sqlite-store.ts";
 import type { ServeLifecycleOptions } from "./server-runtime.ts";
 import type { CliFlags } from "./types.ts";
@@ -153,7 +153,7 @@ export function doctorGitHubCredentials(config: LocalConfig): readonly DoctorChe
       {
         name: "github_app_credentials",
         status: "fail",
-        message: sanitizeMarkdown(
+        message: redactMarkdownSecrets(
           error instanceof Error ? error.message : String(error),
         ),
       },
@@ -190,7 +190,7 @@ export function doctorRepositories(config: LocalConfig): readonly DoctorCheck[] 
       return {
         name: `repo_policy:${repo.owner}/${repo.name}`,
         status: "fail" as const,
-        message: sanitizeMarkdown(
+        message: redactMarkdownSecrets(
           error instanceof Error ? error.message : String(error),
         ),
       };
@@ -690,7 +690,7 @@ export function parseJsonResponse(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    return sanitizeMarkdown(text);
+    return redactMarkdownSecrets(text);
   }
 }
 
