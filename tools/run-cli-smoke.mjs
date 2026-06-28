@@ -10,12 +10,21 @@ const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const npmCli = process.platform === "win32" ? "npm.cmd" : "npm";
 
 function parseArgs(argv) {
-  /** @type {{ binary?: string; skipLink: boolean }} */
-  const options = { skipLink: false };
+  /** @type {{ binary?: string; skipLink: boolean; binaryWrapper: string[] }} */
+  const options = { skipLink: false, binaryWrapper: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--binary") {
       options.binary = argv[index + 1];
+      index += 1;
+      continue;
+    }
+    if (arg === "--binary-wrapper") {
+      const wrapper = argv[index + 1];
+      if (!wrapper) {
+        throw new Error("--binary-wrapper requires a comma-separated command prefix");
+      }
+      options.binaryWrapper = wrapper.split(",").map((part) => part.trim()).filter(Boolean);
       index += 1;
       continue;
     }
@@ -28,8 +37,15 @@ function parseArgs(argv) {
   return options;
 }
 
+function spawnWithOptionalWrapper(command, args, wrapper, spawnOptions) {
+  if (wrapper.length === 0) {
+    return spawnSync(command, args, spawnOptions);
+  }
+  return spawnSync(wrapper[0], [...wrapper.slice(1), command, ...args], spawnOptions);
+}
+
 function runCommand(label, command, args, options = {}) {
-  const result = spawnSync(command, args, {
+  const result = spawnWithOptionalWrapper(command, args, options.binaryWrapper ?? [], {
     cwd: rootDir,
     encoding: "utf8",
     env: options.env ?? process.env,
@@ -221,12 +237,14 @@ function runLinkedAoHelp() {
   runHelpSmoke("linked ao --help", aoCommand, ["--help"]);
 }
 
-function runBinarySmoke(binaryPath, fixture) {
+function runBinarySmoke(binaryPath, fixture, binaryWrapper = []) {
   if (!existsSync(binaryPath)) {
     throw new Error(`Release binary not found: ${binaryPath}`);
   }
 
-  runHelpSmoke(`release binary --help (${binaryPath})`, binaryPath, ["--help"]);
+  const wrapperOptions = { binaryWrapper };
+
+  runHelpSmoke(`release binary --help (${binaryPath})`, binaryPath, ["--help"], wrapperOptions);
 
   const validateOutput = runCommand(
     `release binary validate (${binaryPath})`,
@@ -242,6 +260,7 @@ function runBinarySmoke(binaryPath, fixture) {
     ],
     {
       expectPattern: /"ok"\s*:\s*true/,
+      binaryWrapper,
     },
   );
   if (!validateOutput.includes('"command":"validate"') && !validateOutput.includes('"command": "validate"')) {
@@ -314,7 +333,7 @@ function main() {
     checks.push("ui --once");
 
     if (options.binary) {
-      runBinarySmoke(resolve(rootDir, options.binary), fixture);
+      runBinarySmoke(resolve(rootDir, options.binary), fixture, options.binaryWrapper);
       checks.push(`release binary (${options.binary})`);
     }
 

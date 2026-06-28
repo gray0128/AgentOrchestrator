@@ -35,12 +35,14 @@ jobs:
             artifact_name: ao-darwin-arm64
             archive_ext: tar.gz
             executable: ao
-          - os: macos-15-intel
+          - os: macos-latest
             platform: darwin
             arch: x64
             artifact_name: ao-darwin-x64
             archive_ext: tar.gz
             executable: ao
+            sea_node_arch: x64
+            smoke_binary_wrapper: arch,-x86_64
 
     steps:
       - uses: actions/checkout@v4
@@ -53,26 +55,34 @@ jobs:
 
       - run: npm ci
 
-      - name: Verify published darwin-x64 binary (darwin-x64 only)
-        if: matrix.artifact_name == 'ao-darwin-x64'
+      - name: Install Node.js x64 base for darwin-x64 SEA
+        if: matrix.sea_node_arch == 'x64'
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p dist
-          curl -fsSL -o dist/ao-v0.1.1.tar.gz "https://github.com/gray0128/AgentOrchestrator/releases/download/v0.1.1/ao-darwin-x64.tar.gz"
-          tar -xzf dist/ao-v0.1.1.tar.gz -C dist ao
-          dist/ao --help | head -n 3
+          NODE_VERSION=26.3.1
+          curl -fsSL -o /tmp/node-x64.tgz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-darwin-x64.tar.gz"
+          tar -xzf /tmp/node-x64.tgz -C /tmp
+          echo "NODE_SEA_NODE=/tmp/node-v${NODE_VERSION}-darwin-x64/bin/node" >> "$GITHUB_ENV"
 
       - name: Build single executable
         env:
           AO_PLATFORM: ${{ matrix.platform }}
           AO_ARCH: ${{ matrix.arch }}
           AO_SEA_OUTPUT: dist/${{ matrix.executable }}
+          NODE_SEA_NODE: ${{ env.NODE_SEA_NODE }}
         run: node tools/build/build-sea.mjs
 
       - name: Smoke test release binary
         shell: bash
-        run: node tools/run-cli-smoke.mjs --binary dist/${{ matrix.executable }} --skip-link
+        env:
+          SMOKE_BINARY_WRAPPER: ${{ matrix.smoke_binary_wrapper }}
+        run: |
+          args=(--binary "dist/${{ matrix.executable }}" --skip-link)
+          if [ -n "${SMOKE_BINARY_WRAPPER}" ]; then
+            args+=(--binary-wrapper "${SMOKE_BINARY_WRAPPER}")
+          fi
+          node tools/run-cli-smoke.mjs "${args[@]}"
 
       - name: Package archive (Unix)
         if: runner.os != 'Windows'
