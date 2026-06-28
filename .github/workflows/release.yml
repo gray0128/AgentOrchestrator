@@ -53,6 +53,21 @@ jobs:
 
       - run: npm ci
 
+      - name: Probe Intel macOS SEA baseline (darwin-x64 only)
+        if: matrix.artifact_name == 'ao-darwin-x64'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p dist
+          echo 'console.log("sea-probe-ok")' > dist/sea-probe.mjs
+          node -e "const fs=require('fs'); fs.writeFileSync('dist/sea-probe-config.json', JSON.stringify({main:'dist/sea-probe.mjs',mainFormat:'module',output:'dist/sea-probe'}, null, 2));"
+          node --build-sea dist/sea-probe-config.json
+          codesign --sign - --force --entitlements tools/build/sea-entitlements.plist dist/sea-probe
+          ./dist/sea-probe
+          curl -fsSL -o dist/ao-v0.1.1.tar.gz "https://github.com/gray0128/AgentOrchestrator/releases/download/v0.1.1/ao-darwin-x64.tar.gz"
+          tar -xzf dist/ao-v0.1.1.tar.gz -C dist ao
+          dist/ao --help | head -n 3
+
       - name: Build single executable
         env:
           AO_PLATFORM: ${{ matrix.platform }}
