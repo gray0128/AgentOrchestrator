@@ -109,9 +109,46 @@ jobs:
             ${{ matrix.artifact_name }}.${{ matrix.archive_ext }}
             ${{ matrix.artifact_name }}.${{ matrix.archive_ext }}.sha256
 
+  bundle:
+    name: ao-bundle
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26.3.1"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build bundle
+        run: node tools/build/build-bundle.mjs
+
+      - name: Smoke test bundle
+        run: node tools/run-cli-smoke.mjs --binary dist/ao.bundle.mjs --binary-wrapper node --skip-link
+
+      - name: Package bundle archives
+        run: |
+          cd dist
+          tar -czf ../ao-bundle.tar.gz ao ao.bundle.mjs
+          sha256sum ../ao-bundle.tar.gz > ../ao-bundle.tar.gz.sha256
+          zip ../ao-bundle-windows.zip ao.cmd ao.bundle.mjs
+          sha256sum ../ao-bundle-windows.zip > ../ao-bundle-windows.zip.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ao-bundle
+          path: |
+            ao-bundle.tar.gz
+            ao-bundle.tar.gz.sha256
+            ao-bundle-windows.zip
+            ao-bundle-windows.zip.sha256
+
   release:
     name: Publish GitHub Release
-    needs: build
+    needs: [build, bundle]
     runs-on: ubuntu-latest
     if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
 

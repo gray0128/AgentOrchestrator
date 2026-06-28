@@ -10,6 +10,7 @@
     "node": ">=26.0.0"
   },
   "scripts": {
+    "build:bundle": "node tools/build/build-bundle.mjs",
     "build:sea": "node tools/build/build-sea.mjs",
     "check": "npm run schema:check && npm run format:check && npm run test:unit",
     "coverage": "node tools/run-coverage.mjs",
