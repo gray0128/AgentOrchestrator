@@ -624,6 +624,89 @@ ao inspect-run --config config/local.json --repo <owner/name> --issue <number>
 ao reconcile --config config/local.json --dry-run
 ```
 
+### 使用本地只读 UI
+
+`ao ui` 用于查看本机 SQLite 调度状态，不替代 GitHub Issue / PR 作为用户可见事实来源。它只读取本地状态库，不写 SQLite，也不写 GitHub；可与 `ao serve` 同时连接同一个数据库。
+
+启动 UI：
+
+```sh
+ao ui --config config/local.json
+```
+
+默认地址是：
+
+```text
+http://127.0.0.1:23847/ui/
+```
+
+常用页面：
+
+- `/ui/`：Dashboard，查看 run 总数、状态分布、最近 webhook delivery 和失败 delivery。
+- `/ui/runs`：Run 列表，可按仓库和状态筛选。
+- `/ui/runs/:runId`：Run 详情，查看状态时间线、幂等动作、PR / Issue 链接和 stale head 证据。
+- `/ui/deliveries`：Webhook delivery 列表，用于排查重复、忽略或失败的 delivery。
+
+UI 默认每 10 秒刷新一次，可在页面中关闭自动刷新。默认只允许绑定 `127.0.0.1`；`0.0.0.0` 会被拒绝，避免把本机调试 UI 暴露到公网。
+
+如果只想确认 UI 能启动并通过健康检查：
+
+```sh
+ao ui --config config/local.json --port 0 --once
+```
+
+如果需要浏览器级 smoke：
+
+```sh
+ao ui-browser-smoke --config config/local.json --port 0
+```
+
+### 典型 Issue 状态迁移
+
+一次低风险 Issue 的正常处理路径如下：
+
+```text
+new
+-> planning
+-> plan_reviewing
+-> implementing
+-> pr_opened
+-> pr_reviewing
+-> ci_waiting
+-> merge_ready
+-> merged
+-> issue_closed
+```
+
+各状态含义：
+
+| State | 说明 | 主要 GitHub 产物 |
+| --- | --- | --- |
+| `new` | Issue 已进入本地状态库，但尚未开始自动处理。 | Issue 和触发 label。 |
+| `planning` | Planner 正在生成处理方案。 | Issue 方案评论。 |
+| `plan_reviewing` | Plan Reviewer 正在审核方案。 | 方案审核结论。 |
+| `implementing` | Implementer 正在创建分支、修改代码并准备 PR。 | 分支、commit、实现结果。 |
+| `pr_opened` | PR 已创建或重新绑定到当前 run。 | Pull Request。 |
+| `pr_reviewing` | PR Reviewer 正在审核当前 `head_sha`。 | PR review 结论。 |
+| `ci_waiting` | 等待或评估当前 `head_sha` 的 required checks。 | GitHub Checks / Actions。 |
+| `merge_ready` | 当前 head 的本地 gate 已通过，准备调用 GitHub merge API。 | merge gate 证据。 |
+| `merged` | GitHub merge API 已接受当前 head。 | 已合并 PR。 |
+| `issue_closed` | 已写入收尾评论并关闭 Issue。 | Final summary 和已关闭 Issue。 |
+
+常见分支迁移：
+
+| 场景 | 状态迁移 | 说明 |
+| --- | --- | --- |
+| 方案审核要求修改 | `plan_reviewing` -> `planning` | retry budget 仍可用时重新生成方案。 |
+| PR review 要求修改 | `pr_reviewing` -> `fixing` -> `pr_reviewing` | 修复会产生新 commit，旧 review 和 CI 结论失效。 |
+| CI 失败 | `ci_waiting` -> `fixing` -> `pr_reviewing` | 修复后必须重新走 PR review 和 CI。 |
+| CI 仍在等待 | 保持 `ci_waiting` | pending 或缺失 required checks 时不合并、不失败、不消耗 fix round。 |
+| 用户暂停 | 任意非终态 -> `paused` | 添加 `agent:pause` 后暂停；移除阻断并恢复后回到上一个可恢复状态。 |
+| 策略阻断或高风险 | 任意非终态 -> `blocked` | 例如 deny path、高风险路径、权限失败或不可恢复 stale state。 |
+| 自动重试耗尽 | 任意非终态 -> `failed` | 没有自动恢复路径时终止。 |
+
+状态 label 是 GitHub 上的用户界面和恢复信号；真正的执行安全仍依赖 SQLite CAS、幂等记录和当前 `head_sha` 绑定。`issue_closed` 和 `failed` 是终态。
+
 ## Agent 命令契约
 
 AgentOrchestrator 通过进程适配器运行 coding agent。每个 agent 进程会从 stdin 收到一个 JSON 对象：
